@@ -1,0 +1,3153 @@
+html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Purple Circle Game</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: Arial, sans-serif; }
+canvas { display: block; width: 100vw; height: 100vh; background: #000; cursor: crosshair; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+function setSize() { canvas.width = window.innerWidth || 800; canvas.height = window.innerHeight || 600; }
+setSize();
+window.addEventListener("resize", setSize);
+
+const mouse = { x: canvas.width / 2, y: canvas.height / 2 };
+window.addEventListener("mousemove", function(e) {
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = e.clientX - rect.left;
+  mouse.y = e.clientY - rect.top;
+});
+
+const player = { x: canvas.width / 2, y: canvas.height / 2, radius: 25, baseSpeed: 260, speed: 260, color: "#9b30ff" };
+const keys = { w: false, a: false, s: false, d: false };
+
+let health = 100, maxHealth = 100;
+let enemies = [], enemyBullets = [], projectiles = [], smokeBombs = [], fireOrbs = [];
+let iceSpikes = [], blizzardFields = [], meleeSlashes = [], bombExplosions = [], landMines = [];
+let buhBullets = [], buhShrines = [], shrineSlashFx = [], grassShards = [], grassFields = [];
+let hunterBullets = [];
+let hunterExplosions = [];
+let hunterFZone = null;
+let icebergBeams = [], icebergWalls = [], icebergMinis = [];
+let lavaPuddles = [], magmaShots = [], volcanoShots = [];
+let lavaFCooldownTimer = 0, lavaGCooldownTimer = 0, volcanoFCooldownTimer = 0, volcanoGCooldownTimer = 0;
+let lavaBallTimer = 0, lavaBallTickTimer = 0, lavaBallInvulnerable = false;
+let raidCrateMessage = "";
+let carterLightningTimer = 0, carterLightningTick = 0, carterAuraTimer = 0, carterAuraTick = 0, carterFCooldownTimer = 0, carterGCooldownTimer = 0;
+let lightningBolts = [], lightningStrikes = [], mechanicClaws = [], kaiOrbs = [], kaiFields = [], particleFx = [], starfield = [];
+let enemySpawnTimer = 0;
+const enemySpawnInterval = 1.5;
+let lastTime = performance.now();
+let bgTime = 0;
+
+let inHome = true, homeT = 0, homeBalls = [], homeFx = [];
+
+let cutscene = null;
+let screenShake = 0;
+
+let gachaState = "idle";
+let gachaTimer = 0;
+let gachaResult = null;
+
+let bossesDefeated = 0;
+
+for (let i = 0; i < 120; i++) {
+  starfield.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, r: Math.random() * 1.6 + 0.3, a: Math.random() * 0.5 + 0.2, tw: Math.random() * Math.PI * 2 });
+}
+
+let isPaused = false, currentScreen = "game";
+let isRaidMode = false; // Raid rules are local until a shared online server is connected.
+let normalWave = 1, raidWave = 1;
+let currentWave = 1, enemiesKilledCurrentWave = 0, enemiesSpawnedCurrentWave = 0, enemiesToSpawnThisWave = 0, tanksSpawnedCurrentWave = 0;
+let totalKills = 0;
+const MAX_ACTIVE_ENEMIES_ON_SCREEN = 8;
+
+let equippedElement = "sand";
+let unlockedElements = { sand: true, smoke: false, flame: false, blizzard: false, bomb: false, buh: false, grass: false, lightning: false, mechanic: false, kai: false, polar: false, hunter: false, nickson: false, iceberg: false, carter: false, lava: false, volcano: false };
+let lastRollResult = "", money = 0, raidCoins = 0, nextEnemyId = 1;
+
+const SAVE_KEY = "purple_circle_persistent_save";
+const SAVE_BACKUP_KEY = "purple_circle_persistent_save_backup";
+let saveStorageAvailable = false;
+
+function readSavedData() {
+  // Read both entries before choosing a save, so a higher normal wave in the
+  // backup can be recovered from older versions that accidentally saved raid wave 1.
+  const candidates = [];
+  for (const key of [SAVE_KEY, SAVE_BACKUP_KEY]) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      const data = JSON.parse(raw);
+      if (data && typeof data === "object") candidates.push(data);
+    } catch (e) {
+      // Leave damaged entries untouched in case recovery is possible later.
+    }
+  }
+  if (candidates.length) {
+    saveStorageAvailable = true;
+    const primary = candidates[0];
+    const savedNormalWave = Math.max(1, ...candidates.map(d =>
+      typeof d.normalWave === "number" && d.normalWave >= 1 ? d.normalWave :
+      (typeof d.currentWave === "number" && d.currentWave >= 1 ? d.currentWave : 1)
+    ));
+    primary.normalWave = savedNormalWave;
+    primary.currentWave = savedNormalWave;
+    primary.raidWave = Math.max(1, ...candidates.map(d => typeof d.raidWave === "number" && d.raidWave >= 1 ? d.raidWave : 1));
+    primary.maxHealth = Math.max(100, ...candidates.map(d => typeof d.maxHealth === "number" && d.maxHealth >= 100 ? d.maxHealth : 100));
+    primary.totalKills = Math.max(0, ...candidates.map(d => typeof d.totalKills === "number" && d.totalKills >= 0 ? d.totalKills : 0));
+    primary.bossesDefeated = Math.max(0, ...candidates.map(d => typeof d.bossesDefeated === "number" && d.bossesDefeated >= 0 ? d.bossesDefeated : 0));
+    primary.unlockedElements = Object.assign({}, ...candidates.map(d => d.unlockedElements || {}));
+    for (const d of candidates) {
+      for (const key of Object.keys(d.unlockedElements || {})) {
+        if (d.unlockedElements[key] === true) primary.unlockedElements[key] = true;
+      }
+    }
+    return primary;
+  }
+  try {
+    const testKey = "purple_circle_save_test";
+    window.localStorage.setItem(testKey, "1");
+    window.localStorage.removeItem(testKey);
+    saveStorageAvailable = true;
+  } catch (e) { saveStorageAvailable = false; }
+  return null;
+}
+
+try {
+  const data = readSavedData();
+  if (data) {
+    money = typeof data.money === "number" ? data.money : 0;
+    raidCoins = typeof data.raidCoins === "number" ? Math.max(0, data.raidCoins) : 0;
+    maxHealth = typeof data.maxHealth === "number" ? data.maxHealth : 100;
+    equippedElement = typeof data.equippedElement === "string" ? data.equippedElement : "sand";
+    totalKills = typeof data.totalKills === "number" ? data.totalKills : 0;
+    bossesDefeated = typeof data.bossesDefeated === "number" ? data.bossesDefeated : 0;
+    if (data.unlockedElements && typeof data.unlockedElements === "object") {
+      for (const key of Object.keys(unlockedElements)) {
+        if (key === "sand") unlockedElements.sand = true;
+        else if (data.unlockedElements[key] === true) unlockedElements[key] = true;
+      }
+    }
+    normalWave = typeof data.normalWave === "number" && data.normalWave >= 1 ? data.normalWave : (typeof data.currentWave === "number" && data.currentWave >= 1 ? data.currentWave : 1);
+    raidWave = typeof data.raidWave === "number" && data.raidWave >= 1 ? data.raidWave : 1;
+    currentWave = normalWave;
+  }
+} catch (e) { /* Keep the game playable if browser storage is unavailable. */ }
+
+health = maxHealth;
+
+function saveGameData() {
+  const snapshot = JSON.stringify({
+    version: 5, savedAt: Date.now(), money: money, raidCoins: raidCoins, maxHealth: maxHealth,
+    equippedElement: equippedElement, unlockedElements: unlockedElements,
+    // Keep normal and raid progress separate. Legacy currentWave always means normal mode.
+    currentWave: isRaidMode ? normalWave : currentWave,
+    normalWave: isRaidMode ? normalWave : currentWave,
+    raidWave: isRaidMode ? currentWave : raidWave,
+    totalKills: totalKills, bossesDefeated: bossesDefeated
+  });
+  try {
+    const previous = window.localStorage.getItem(SAVE_KEY);
+    if (previous) window.localStorage.setItem(SAVE_BACKUP_KEY, previous);
+    window.localStorage.setItem(SAVE_KEY, snapshot);
+    saveStorageAvailable = true;
+  } catch (e) {
+    saveStorageAvailable = false;
+  }
+}
+
+// Autosave regularly and whenever the player leaves, hides, or closes the page.
+window.addEventListener("beforeunload", saveGameData);
+window.addEventListener("pagehide", saveGameData);
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "hidden") saveGameData();
+});
+setInterval(saveGameData, 5000);
+
+function getKillsRequiredForWave(wave) { return 5 + (wave - 1) * 2; }
+function isBossWave(wave) { return wave % 5 === 0; }
+function getMoneyPerKill() { return currentWave >= 35 ? 200 : 1 + Math.floor((currentWave - 1) / 3) + 25 * Math.floor(currentWave / 10); }
+function getBossHp() { return 1000 + bossesDefeated * 500; }
+
+let beamCooldownTimer = 0, activeLaser = null;
+let auraCooldownTimer = 0, auraActiveTimer = 0, auraDamageTickTimer = 0;
+let smokeShotCooldownTimer = 0, smokeDashCooldownTimer = 0, smokeDashActiveTimer = 0, smokeBombSpawnTimer = 0;
+let flameSpinActiveTimer = 0, flameSpinCooldownTimer = 0, flameSpinAngle = 0, flameSpinTickTimer = 0;
+let flameOrbCooldownTimer = 0;
+let iceSpikeCooldownTimer = 0, blizzardFieldCooldownTimer = 0;
+let meleeCooldownTimer = 0;
+let bombMiniCooldownTimer = 0, bombBigCooldownTimer = 0;
+let buhBarrageCooldownTimer = 0, buhShrineCooldownTimer = 0;
+let grassShotCooldownTimer = 0, grassFieldCooldownTimer = 0;
+let lightningBoltCooldownTimer = 0, lightningStormCooldownTimer = 0;
+let mechanicClawCooldownTimer = 0, mechanicSpinCooldownTimer = 0, mechanicSpinActiveTimer = 0, mechanicSpinTickTimer = 0, mechanicSpinAngle = 0;
+let kaiOrbCooldownTimer = 0, kaiFieldCooldownTimer = 0;
+let hunterSpaceCooldownTimer = 0, hunterGCooldownTimer = 0, hunterFCooldownTimer = 0, hunterFWaveTimer = 0, hunterFWavesLeft = 0;
+let polarFrostCooldownTimer = 0, polarFrostActiveTimer = 0, polarFrostTickTimer = 0;
+let polarSpinCooldownTimer = 0, polarSpinActiveTimer = 0, polarSpinTickTimer = 0, polarSpinAngle = 0;
+let icebergMeleeCooldownTimer = 0, icebergGCooldownTimer = 0, icebergFCooldownTimer = 0, icebergStormTimer = 0, icebergStormTickTimer = 0;
+let nicksonShockCooldownTimer = 0, nicksonGrowCooldownTimer = 0, nicksonGrowTimer = 0, nicksonSuctionTimer = 0, nicksonWaveTimer = 0, nicksonWaveRadius = 0;
+let vBoostActiveTimer = 0, vBoostCooldownTimer = 0, vBoostMultiplier = 1;
+
+function resetGame(skipSave, preserveWave) {
+  if (!preserveWave) currentWave = 1;
+  enemiesKilledCurrentWave = 0; enemiesSpawnedCurrentWave = 0;
+  enemiesToSpawnThisWave = 0; health = maxHealth;
+  enemies = []; enemyBullets = []; projectiles = []; smokeBombs = []; fireOrbs = [];
+  iceSpikes = []; blizzardFields = []; meleeSlashes = []; bombExplosions = []; landMines = [];
+  icebergBeams = []; icebergWalls = []; icebergMinis = [];
+  lavaPuddles = []; magmaShots = []; volcanoShots = []; lavaFCooldownTimer = 0; lavaGCooldownTimer = 0; volcanoFCooldownTimer = 0; volcanoGCooldownTimer = 0; lavaBallTimer = 0; lavaBallTickTimer = 0; lavaBallInvulnerable = false;
+  buhBullets = []; buhShrines = []; shrineSlashFx = []; grassShards = []; grassFields = [];
+  lightningBolts = []; lightningStrikes = []; mechanicClaws = []; kaiOrbs = []; kaiFields = []; hunterBullets = []; hunterExplosions = []; hunterFZone = null; particleFx = [];
+  beamCooldownTimer = 0; auraCooldownTimer = 0; auraActiveTimer = 0;
+  smokeShotCooldownTimer = 0; smokeDashCooldownTimer = 0; smokeDashActiveTimer = 0;
+  flameSpinActiveTimer = 0; flameSpinCooldownTimer = 0; flameOrbCooldownTimer = 0;
+  iceSpikeCooldownTimer = 0; blizzardFieldCooldownTimer = 0; meleeCooldownTimer = 0;
+  bombMiniCooldownTimer = 0; bombBigCooldownTimer = 0;
+  buhBarrageCooldownTimer = 0; buhShrineCooldownTimer = 0;
+  grassShotCooldownTimer = 0; grassFieldCooldownTimer = 0;
+  lightningBoltCooldownTimer = 0; lightningStormCooldownTimer = 0;
+  mechanicClawCooldownTimer = 0; mechanicSpinCooldownTimer = 0; mechanicSpinActiveTimer = 0;
+  kaiOrbCooldownTimer = 0; kaiFieldCooldownTimer = 0;
+  hunterSpaceCooldownTimer = 0; hunterGCooldownTimer = 0; hunterFCooldownTimer = 0; hunterFWaveTimer = 0; hunterFWavesLeft = 0; hunterExplosions = []; hunterFZone = null;
+  polarFrostCooldownTimer = 0; polarFrostActiveTimer = 0; polarFrostTickTimer = 0;
+  polarSpinCooldownTimer = 0; polarSpinActiveTimer = 0; polarSpinTickTimer = 0; polarSpinAngle = 0;
+  icebergMeleeCooldownTimer = 0; icebergGCooldownTimer = 0; icebergFCooldownTimer = 0; icebergStormTimer = 0; icebergStormTickTimer = 0;
+  carterLightningTimer = 0; carterLightningTick = 0; carterAuraTimer = 0; carterAuraTick = 0; carterFCooldownTimer = 0; carterGCooldownTimer = 0;
+  nicksonShockCooldownTimer = 0; nicksonGrowCooldownTimer = 0; nicksonGrowTimer = 0; nicksonSuctionTimer = 0; nicksonWaveTimer = 0; nicksonWaveRadius = 0;
+  vBoostActiveTimer = 0; vBoostCooldownTimer = 0; vBoostMultiplier = 1;
+  activeLaser = null;
+  isPaused = false; currentScreen = "game";
+  player.x = canvas.width / 2; player.y = canvas.height / 2;
+  player.speed = player.baseSpeed;
+  if (!skipSave) saveGameData();
+}
+
+function goToLobby() {
+  resetGame(true, true);
+  inHome = true;
+  homeBalls = [];
+  homeFx = [];
+  homeT = 0;
+  cutscene = null;
+  screenShake = 0;
+  saveGameData();
+}
+
+function startCutscene(type, duration, data) {
+  cutscene = { type: type, timer: duration, maxTimer: duration, data: data || {} };
+}
+
+function startWave() {
+  enemiesKilledCurrentWave = 0; enemiesSpawnedCurrentWave = 0; tanksSpawnedCurrentWave = 0;
+  enemiesToSpawnThisWave = getKillsRequiredForWave(currentWave) + (currentWave >= 20 ? 5 : 0);
+  if (isBossWave(currentWave)) {
+    enemiesToSpawnThisWave += 1;
+    startCutscene("bossIntro", 2.2, { bossNum: bossesDefeated + 1 });
+    screenShake = 1.0;
+  }
+}
+
+function spawnEnemy() {
+  if (enemiesSpawnedCurrentWave >= enemiesToSpawnThisWave) return;
+  if (enemies.length >= MAX_ACTIVE_ENEMIES_ON_SCREEN) return;
+  const rand = Math.random();
+  let type = "normal", radius = 12, speed = 110, damage = 25;
+  let hp = 100 + (currentWave - 1) * 25, color = "#ff3333";
+  let isBoss = false, isTank = false, isRusher = false;
+  if (isBossWave(currentWave) && !enemies.some(function(e){ return e.isBoss; }) && enemiesSpawnedCurrentWave === 0) {
+    isBoss = true; type = "boss"; radius = 40; speed = 60; damage = 40; hp = getBossHp(); color = "#a020f0";
+  } else if (currentWave >= 20 && tanksSpawnedCurrentWave < 5) {
+    isTank = true; type = "tank"; radius = 22; speed = 70; damage = 35;
+    hp = 4000; color = "#3ea663";
+  } else if (currentWave >= 5 && rand < 0.15) {
+    isTank = true; type = "tank"; radius = 22; speed = 70; damage = 35;
+    hp = 300 + (currentWave - 5) * 20; color = "#3ea663";
+  } else if (currentWave >= 4 && rand < 0.32) {
+    isRusher = true; type = "rusher"; radius = 14; speed = 160; damage = 30;
+    hp = 180 + (currentWave - 4) * 18; color = "#dd44dd";
+  } else if (currentWave >= 2 && rand < 0.6) {
+    type = "fast"; radius = 9; speed = 200; damage = 20;
+    hp = 70 + (currentWave - 1) * 12; color = "#ff9900";
+  }
+  if (isRaidMode) hp *= 10;
+  let elementalAura = null;
+  if (!isBoss && currentWave > 5 && Math.random() < 0.22) {
+    const auras = [
+      { key: "sand", color: "#e5c15a" }, { key: "smoke", color: "#b8dce8" },
+      { key: "flame", color: "#ff542e" }, { key: "bomb", color: "#ffcc00" },
+      { key: "grass", color: "#65e36b" }, { key: "lightning", color: "#bd7bff" },
+      { key: "mechanic", color: "#c2ccd8" }
+    ];
+    elementalAura = auras[Math.floor(Math.random() * auras.length)];
+    damage = 6;
+  }
+  let x, y;
+  if (Math.random() < 0.5) { x = Math.random() < 0.5 ? -radius : canvas.width + radius; y = Math.random() * canvas.height; }
+  else { x = Math.random() * canvas.width; y = Math.random() < 0.5 ? -radius : canvas.height + radius; }
+  enemies.push({
+    id: nextEnemyId++, type: type, isBoss: isBoss, isTank: isTank, isRusher: isRusher,
+    x: x, y: y, radius: radius, speed: speed, baseSpeed: speed,
+    color: color, damage: damage, elementalAura: elementalAura,
+    maxHealth: hp, health: hp, hitCooldown: 0, freezeTimer: 0,
+    shootTimer: isBoss ? 1.5 : 0, dashTimer: isRusher ? 2.0 : 0, dashing: false,
+    pulsePhase: Math.random() * Math.PI * 2
+  });
+  enemiesSpawnedCurrentWave++;
+  if (isTank && currentWave >= 20) tanksSpawnedCurrentWave++;
+}
+
+function onEnemyKilled(enemy) {
+  enemiesKilledCurrentWave++;
+  totalKills++;
+  money += getMoneyPerKill();
+  raidCoins += 10;
+  if (enemy && enemy.isBoss) {
+    bossesDefeated++;
+    startCutscene("bossDefeated", 1.8, {});
+    screenShake = 0.8;
+  }
+  saveGameData();
+  if (enemiesKilledCurrentWave >= getKillsRequiredForWave(currentWave)) {
+    currentWave++;
+    if (isRaidMode) raidWave = currentWave; else normalWave = currentWave;
+    startWave();
+    saveGameData();
+  }
+}
+
+function spawnParticles(x, y, count, color, speed, life, size) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = speed * (0.4 + Math.random() * 0.8);
+    particleFx.push({
+      x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      life: life * (0.7 + Math.random() * 0.6), maxLife: life,
+      color: color, size: size * (0.5 + Math.random() * 0.8)
+    });
+  }
+}
+
+function useVBoost() {
+  if (isPaused || cutscene) return;
+  if (vBoostCooldownTimer > 0) return;
+  if (totalKills < 50) return;
+  if (totalKills >= 100) {
+    vBoostActiveTimer = 5.0; vBoostMultiplier = 3.0; vBoostCooldownTimer = 8.0;
+    if (equippedElement === "sand") { beamCooldownTimer = 0; auraCooldownTimer = 0; }
+    else if (equippedElement === "smoke") { smokeShotCooldownTimer = 0; smokeDashCooldownTimer = 0; }
+    else if (equippedElement === "flame") { flameSpinCooldownTimer = 0; flameOrbCooldownTimer = 0; }
+    else if (equippedElement === "blizzard") { iceSpikeCooldownTimer = 0; blizzardFieldCooldownTimer = 0; }
+    else if (equippedElement === "bomb") { bombMiniCooldownTimer = 0; bombBigCooldownTimer = 0; }
+    else if (equippedElement === "buh") { buhBarrageCooldownTimer = 0; buhShrineCooldownTimer = 0; }
+    else if (equippedElement === "grass") { grassShotCooldownTimer = 0; grassFieldCooldownTimer = 0; }
+    else if (equippedElement === "lightning") { lightningBoltCooldownTimer = 0; lightningStormCooldownTimer = 0; }
+    else if (equippedElement === "mechanic") { mechanicClawCooldownTimer = 0; mechanicSpinCooldownTimer = 0; mechanicSpinActiveTimer = 0; }
+    else if (equippedElement === "kai") { kaiOrbCooldownTimer = 0; kaiFieldCooldownTimer = 0;
+  hunterSpaceCooldownTimer = 0; hunterGCooldownTimer = 0; hunterFCooldownTimer = 0; hunterFWaveTimer = 0; hunterFWavesLeft = 0; }
+    else if (equippedElement === "polar") { polarFrostCooldownTimer = 0; polarSpinCooldownTimer = 0; }
+    else if (equippedElement === "iceberg") { icebergMeleeCooldownTimer = 0; icebergGCooldownTimer = 0; icebergFCooldownTimer = 0; }
+    else if (equippedElement === "hunter") { hunterGCooldownTimer = 0; hunterFCooldownTimer = 0; hunterSpaceCooldownTimer = 0; }
+    spawnParticles(player.x, player.y, 40, "#00ffff", 320, 0.7, 5);
+  } else {
+    vBoostActiveTimer = 4.0; vBoostMultiplier = 2.0; vBoostCooldownTimer = 6.0;
+    spawnParticles(player.x, player.y, 25, "#ffee55", 250, 0.6, 4);
+  }
+}
+
+function useMelee() {
+  if (isPaused || cutscene || equippedElement === "carter") return;
+  if (equippedElement === "hunter") {
+    if (hunterSpaceCooldownTimer > 0) return;
+    // SPACE is manually aimed at the mouse; the round explodes on contact in an AoE.
+    const angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    const muzzleX = player.x + Math.cos(angle) * (player.radius + 32);
+    const muzzleY = player.y + Math.sin(angle) * (player.radius + 32);
+    hunterBullets.push({ x: muzzleX, y: muzzleY, vx: Math.cos(angle), vy: Math.sin(angle), targetId: null, speed: 760, radius: 10, damage: 2000, splashRadius: 115, color: "#f2b66d", life: 2.2 });
+    hunterSpaceCooldownTimer = 2;
+    return;
+  }
+  if (equippedElement === "iceberg") {
+    if (icebergMeleeCooldownTimer > 0) return;
+    const angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    const beam = { angle, duration: 3.0, tickTimer: 0.5, hitIds: new Set() };
+    icebergBeams.push(beam);
+    // The first impact deals 2,000 damage; the sustained beam adds 300 every 0.5 seconds.
+    damageIcebergBeam(beam, 2000);
+    icebergMeleeCooldownTimer = 4.0;
+    return;
+  }
+  if (meleeCooldownTimer > 0) return;
+  const angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  const configs = {
+    flame:    { reach: 110, arc: Math.PI * 0.7,  dmg: 150, cd: 1.0, color: "rgba(255, 100, 0, 0.85)", inner: "#ffff00", parts: "#ffcc44" },
+    blizzard: { reach: 200, arc: Math.PI * 0.6,  dmg: 120, cd: 0.5, color: "rgba(120, 200, 255, 0.85)", inner: "#e6f6ff", parts: "#aee4ff", freeze: 1.5 },
+    bomb:     { reach: 90,  arc: Math.PI * 0.8,  dmg: 90,  cd: 0.6, color: "rgba(80, 80, 80, 0.85)", inner: "#ffcc00", parts: "#ffcc00" },
+    buh:      { reach: 160, arc: Math.PI * 0.85, dmg: 200, cd: 0.7, color: "rgba(255, 0, 80, 0.85)", inner: "#ffccff", parts: "#ff66aa" },
+    grass:    { reach: 130, arc: Math.PI * 0.75, dmg: 110, cd: 0.7, color: "rgba(80, 200, 80, 0.85)", inner: "#d0ffb0", parts: "#90ee90" },
+    lightning:{ reach: 170, arc: Math.PI * 0.7,  dmg: 180, cd: 0.55, color: "rgba(180, 100, 255, 0.9)", inner: "#e0ccff", parts: "#d0a0ff" },
+    mechanic: { reach: 190, arc: Math.PI * 0.65, dmg: 220, cd: 0.6, color: "rgba(150, 160, 180, 0.9)", inner: "#d0d8e0", parts: "#c0c8d0" },
+    kai:      { reach: 140, arc: Math.PI * 0.8,  dmg: 120, cd: 0.65, color: "rgba(200, 80, 220, 0.85)", inner: "#f0c0ff", parts: "#e080ff" },
+    polar:    { reach: 220, arc: Math.PI * 0.75, dmg: 350, cd: 0.45, color: "rgba(185, 244, 255, 0.9)", inner: "#ffffff", parts: "#b9f4ff" }
+  };
+  const cfg = configs[equippedElement];
+  if (!cfg) { meleeCooldownTimer = 0.5; return; }
+  meleeSlashes.push({ x: player.x, y: player.y, angle: angle, reach: cfg.reach, arc: cfg.arc, life: 0.28, maxLife: 0.28, color: cfg.color, colorInner: cfg.inner });
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const enemy = enemies[i];
+    const dx = enemy.x - player.x, dy = enemy.y - player.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist <= cfg.reach + enemy.radius) {
+      let d = Math.atan2(dy, dx) - angle;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      if (Math.abs(d) <= cfg.arc / 2) {
+        enemy.health -= cfg.dmg;
+        if (cfg.freeze) enemy.freezeTimer = Math.max(enemy.freezeTimer, cfg.freeze);
+        spawnParticles(enemy.x, enemy.y, 6, cfg.parts, 130, 0.4, 3);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(i, 1); onEnemyKilled({ isBoss: isB }); }
+      }
+    }
+  }
+  meleeCooldownTimer = cfg.cd;
+}
+
+function damageIcebergBeam(beam, damage) {
+  const dx = Math.cos(beam.angle), dy = Math.sin(beam.angle);
+  const maxLen = Math.hypot(canvas.width, canvas.height) * 1.5;
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const enemy = enemies[i];
+    const ex = enemy.x - player.x, ey = enemy.y - player.y;
+    const along = ex * dx + ey * dy;
+    const across = Math.abs(ex * dy - ey * dx);
+    if (along >= 0 && along <= maxLen && across <= 34 + enemy.radius) {
+      enemy.health -= damage;
+      spawnParticles(enemy.x, enemy.y, 5, "#bff8ff", 190, 0.35, 4);
+      if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(i, 1); onEnemyKilled({ isBoss: isB }); }
+    }
+  }
+}
+
+function applyExplosionDamage(x, y, radius, damage) {
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const enemy = enemies[i];
+    if (Math.hypot(x - enemy.x, y - enemy.y) <= radius + enemy.radius) {
+      enemy.health -= damage;
+      if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(i, 1); onEnemyKilled({ isBoss: isB }); }
+    }
+  }
+}
+
+function nearestEnemyTo(x, y) {
+  let best = null, bestD = Infinity;
+  for (let i = 0; i < enemies.length; i++) {
+    const e = enemies[i];
+    const d = (e.x - x) * (e.x - x) + (e.y - y) * (e.y - y);
+    if (d < bestD) { bestD = d; best = e; }
+  }
+  return best;
+}
+
+function useGAbility() {
+  if (isPaused || cutscene) return;
+  if (equippedElement === "sand") {
+    if (beamCooldownTimer > 0 || enemies.length === 0) return;
+    const t = nearestEnemyTo(player.x, player.y);
+    if (t) {
+      activeLaser = { startX: player.x, startY: player.y, endX: t.x, endY: t.y, duration: 0.15 };
+      spawnParticles(t.x, t.y, 10, "#ffe066", 200, 0.4, 4);
+      t.health -= 100;
+      if (t.health <= 0) { const isB = t.isBoss; const idx = enemies.indexOf(t); if (idx !== -1) { enemies.splice(idx, 1); onEnemyKilled({ isBoss: isB }); } }
+      beamCooldownTimer = 1.0;
+    }
+  } else if (equippedElement === "smoke") {
+    if (smokeShotCooldownTimer > 0 || enemies.length === 0) return;
+    const t = nearestEnemyTo(player.x, player.y);
+    if (t) {
+      const a = Math.atan2(t.y - player.y, t.x - player.x);
+      projectiles.push({ x: player.x, y: player.y, vx: Math.cos(a) * 450, vy: Math.sin(a) * 450, radius: 16, damage: 80, trail: [] });
+      smokeShotCooldownTimer = 2.0;
+    }
+  } else if (equippedElement === "flame") {
+    if (flameSpinCooldownTimer > 0) return;
+    flameSpinActiveTimer = 3.0; flameSpinCooldownTimer = 4.0; flameSpinTickTimer = 0;
+  } else if (equippedElement === "blizzard") {
+    if (iceSpikeCooldownTimer > 0) return;
+    const spikeW = canvas.width * 0.5, spikeH = 180;
+    iceSpikes.push({ x: player.x, y: player.y, w: spikeW, h: spikeH, duration: 3.0, impactDamage: 300, contactDamage: 100, contactTick: 0.5, contactTimer: 0, impactApplied: false });
+    iceSpikeCooldownTimer = 4.0;
+  } else if (equippedElement === "bomb") {
+    if (bombMiniCooldownTimer > 0) return;
+    const radius = 90;
+    const a = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    const tx = player.x + Math.cos(a) * 120;
+    const ty = player.y + Math.sin(a) * 120;
+    const ex = { x: tx, y: ty, radius: radius, life: 0.4, maxLife: 0.4, damage: 100, sparks: [] };
+    for (let s = 0; s < 14; s++) ex.sparks.push({ a: Math.random() * Math.PI * 2, len: 20 + Math.random() * 30, life: 0.4 });
+    bombExplosions.push(ex);
+    spawnParticles(tx, ty, 16, "#ffcc44", 260, 0.5, 4);
+    applyExplosionDamage(tx, ty, radius, 100);
+    bombMiniCooldownTimer = 2.0;
+  } else if (equippedElement === "buh") {
+    if (buhBarrageCooldownTimer > 0) return;
+    const total = 7;
+    const baseAngle = Math.random() * Math.PI * 2;
+    const target = nearestEnemyTo(player.x, player.y);
+    for (let i = 0; i < total; i++) {
+      let a;
+      if (target) { a = Math.atan2(target.y - player.y, target.x - player.x) + (i - 3) * 0.18; }
+      else { a = baseAngle + (Math.PI * 2 / total) * i; }
+      buhBullets.push({ x: player.x, y: player.y, vx: Math.cos(a) * 480, vy: Math.sin(a) * 480, radius: 22, damage: 500, hitIds: new Set(), spinAngle: 0, homing: true, trail: [] });
+    }
+    buhBarrageCooldownTimer = 6.0;
+  } else if (equippedElement === "grass") {
+    if (grassShotCooldownTimer > 0) return;
+    const a = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    for (let s = -1; s <= 1; s++) {
+      const ang = a + s * 0.18;
+      grassShards.push({ x: player.x, y: player.y, vx: Math.cos(ang) * 520, vy: Math.sin(ang) * 520, radius: 12, damage: 100, hitIds: new Set(), rot: ang, trail: [] });
+    }
+    grassShotCooldownTimer = 7.0;
+  } else if (equippedElement === "lightning") {
+    if (lightningBoltCooldownTimer > 0) return;
+    const a = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    const zz = [];
+    for (let k = 0; k < 8; k++) zz.push((Math.random() - 0.5) * 24);
+    lightningBolts.push({ x: player.x, y: player.y, vx: Math.cos(a) * 620, vy: Math.sin(a) * 620, radius: 22, damage: 300, hitIds: new Set(), angle: a, zigzag: zz, life: 2.5, trail: [] });
+    lightningBoltCooldownTimer = 3.5;
+  } else if (equippedElement === "mechanic") {
+    if (mechanicClawCooldownTimer > 0) return;
+    const a = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    for (let i = 0; i < 6; i++) {
+      const spread = (i - 2.5) * 0.16;
+      const ca = a + spread;
+      mechanicClaws.push({
+        x: player.x, y: player.y, startX: player.x, startY: player.y,
+        vx: Math.cos(ca) * 700, vy: Math.sin(ca) * 700,
+        radius: 24, damage: 500, hitIds: new Set(),
+        angle: ca, length: 60, extend: 0, maxExtend: 90, life: 0.6, trail: []
+      });
+    }
+    mechanicClawCooldownTimer = 3.0;
+    spawnParticles(player.x + Math.cos(a) * 40, player.y + Math.sin(a) * 40, 15, "#c0c8d0", 200, 0.4, 4);
+  } else if (equippedElement === "kai") {
+    if (kaiOrbCooldownTimer > 0) return;
+    const total = 5;
+    const baseAngle = Math.random() * Math.PI * 2;
+    const target = nearestEnemyTo(player.x, player.y);
+    for (let i = 0; i < total; i++) {
+      let a;
+      if (target) { a = Math.atan2(target.y - player.y, target.x - player.x) + (i - 2) * 0.22; }
+      else { a = baseAngle + (Math.PI * 2 / total) * i; }
+      kaiOrbs.push({
+        x: player.x, y: player.y,
+        vx: Math.cos(a) * 520, vy: Math.sin(a) * 520,
+        radius: 18, damage: 50, hitIds: new Set(),
+        spinAngle: 0, homing: true, trail: []
+      });
+    }
+    kaiOrbCooldownTimer = 4.0;
+  } else if (equippedElement === "polar") {
+    if (polarFrostCooldownTimer > 0) return;
+    polarFrostActiveTimer = 8.0; polarFrostCooldownTimer = 15.0; polarFrostTickTimer = 0;
+    spawnParticles(player.x, player.y, 50, "#b9f4ff", 380, 0.8, 5);
+  } else if (equippedElement === "iceberg") {
+    if (icebergGCooldownTimer > 0) return;
+    // Four homing mini-icebergs keep attacking until each has dealt 20,000 total damage.
+    for (let i = 0; i < 4; i++) {
+      const a = (Math.PI * 2 * i / 4) + Math.random() * 0.25;
+      icebergMinis.push({ x: player.x + Math.cos(a) * 34, y: player.y + Math.sin(a) * 34, vx: Math.cos(a) * 280, vy: Math.sin(a) * 280, radius: 24, damage: 1000, damageDealt: 0, maxDamage: 20000, life: 18, hitCooldowns: new Map(), spin: a });
+    }
+    icebergGCooldownTimer = 12.0;
+    spawnParticles(player.x, player.y, 45, "#bff8ff", 280, 0.8, 5);
+  } else if (equippedElement === "lava") {
+    if (lavaGCooldownTimer > 0) return;
+    for (let i = 0; i < 12; i++) {
+      const a = i * Math.PI * 2 / 12;
+      magmaShots.push({ x: player.x, y: player.y, vx: Math.cos(a) * 430, vy: Math.sin(a) * 430, life: 1.25, radius: 13, hitIds: new Set() });
+    }
+    lavaGCooldownTimer = 7;
+    spawnParticles(player.x, player.y, 40, "#ff4b16", 320, 0.7, 5);
+  } else if (equippedElement === "volcano") {
+    if (volcanoGCooldownTimer > 0) return;
+    lavaPuddles.push({ x: player.x, y: player.y, radius: Math.max(canvas.width, canvas.height) * 0.42, life: 5, tick: 0, damage: 5000, color: "volcano" });
+    volcanoGCooldownTimer = 10;
+    spawnParticles(player.x, player.y, 65, "#ff3b0b", 420, 0.9, 6);
+  } else if (equippedElement === "hunter") {
+    if (hunterGCooldownTimer > 0) return;
+    // Ten auto-targeting homing shells that remain active for 4 seconds, then despawn.
+    const target = nearestEnemyTo(player.x, player.y);
+    const aimAngle = target ? Math.atan2(target.y-player.y, target.x-player.x) : Math.atan2(mouse.y-player.y, mouse.x-player.x);
+    const muzzleX = player.x + Math.cos(aimAngle) * (player.radius + 32);
+    const muzzleY = player.y + Math.sin(aimAngle) * (player.radius + 32);
+    for (let i = 0; i < 10; i++) {
+      const angle = aimAngle + (i - 4.5) * 0.035;
+      hunterBullets.push({ x: muzzleX, y: muzzleY, vx: Math.cos(angle), vy: Math.sin(angle), targetId: target ? target.id : null, speed: 680 + (i % 5) * 12, radius: 6, damage: 100, color: "#c18a50", persistent: true, totalDamage: 0, hitCooldowns: new Map(), life: 4.0 });
+    }
+    hunterGCooldownTimer = 6.0;
+  } else if (equippedElement === "carter") {
+    if (carterGCooldownTimer > 0) return;
+    carterAuraTimer = 4.0; carterAuraTick = 0; carterGCooldownTimer = 10.0;
+    spawnParticles(player.x, player.y, 35, "#f6f34a", 300, 0.7, 5);
+  } else if (equippedElement === "nickson") {
+    if (nicksonGrowCooldownTimer > 0) return;
+    nicksonGrowTimer = 5.0; nicksonSuctionTimer = 4.0; nicksonGrowCooldownTimer = 10.0;
+    // Deal 200 damage to each enemy as Nickson grows; enemies remain able to attack.
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const enemy = enemies[i]; enemy.health -= 200;
+      spawnParticles(enemy.x, enemy.y, 6, "#66f0ff", 180, 0.4, 4);
+      if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(i, 1); onEnemyKilled({ isBoss: isB }); }
+    }
+    spawnParticles(player.x, player.y, 35, "#66f0ff", 250, 0.7, 5);
+  }
+}
+
+function useFAbility() {
+  if (isPaused || cutscene) return;
+  if (equippedElement === "sand") {
+    if (auraCooldownTimer > 0) return;
+    auraActiveTimer = 4.0; auraCooldownTimer = 8.0; auraDamageTickTimer = 0;
+  } else if (equippedElement === "smoke") {
+    if (smokeDashCooldownTimer > 0) return;
+    smokeDashActiveTimer = 4.0; smokeDashCooldownTimer = 4.0; smokeBombSpawnTimer = 0;
+  } else if (equippedElement === "flame") {
+    if (flameOrbCooldownTimer > 0) return;
+    const a = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    fireOrbs.push({ x: player.x, y: player.y, vx: Math.cos(a) * 350, vy: Math.sin(a) * 350, radius: 35, duration: 4.0, damage: 300, damageDealt: 0, maxDamage: 1500, spinAngle: 0, hitIds: new Set() });
+    flameOrbCooldownTimer = 5.0;
+  } else if (equippedElement === "blizzard") {
+    if (blizzardFieldCooldownTimer > 0) return;
+    const r = player.radius * 12;
+    blizzardFields.push({ x: player.x, y: player.y, radius: r, duration: 5.0, impactDamage: 400, contactDamage: 300, contactTick: 0.5, contactTimer: 0, impactApplied: false, swirl: 0 });
+    blizzardFieldCooldownTimer = 8.0;
+  } else if (equippedElement === "bomb") {
+    if (bombBigCooldownTimer > 0) return;
+    const bigR = 180;
+    const bigEx = { x: player.x, y: player.y, radius: bigR, life: 0.5, maxLife: 0.5, damage: 400, sparks: [] };
+    for (let s = 0; s < 22; s++) bigEx.sparks.push({ a: Math.random() * Math.PI * 2, len: 30 + Math.random() * 50, life: 0.5 });
+    bombExplosions.push(bigEx);
+    spawnParticles(player.x, player.y, 26, "#ffcc44", 320, 0.6, 5);
+    applyExplosionDamage(player.x, player.y, bigR, 400);
+    for (let m = 0; m < 8; m++) {
+      const a = (Math.PI * 2 / 8) * m + Math.random() * 0.5;
+      const d = 100 + Math.random() * 120;
+      landMines.push({ x: player.x + Math.cos(a) * d, y: player.y + Math.sin(a) * d, radius: 18, duration: 5.0, damage: 200, exploded: false, explodeTimer: 0, blink: Math.random() * Math.PI * 2 });
+    }
+    bombBigCooldownTimer = 6.0;
+  } else if (equippedElement === "buh") {
+    if (buhShrineCooldownTimer > 0) return;
+    const r = player.radius * 14;
+    buhShrines.push({ x: player.x, y: player.y, radius: r, duration: 7.0, tickTimer: 0, tickInterval: 0.05, damage: 100, rune: 0 });
+    buhShrineCooldownTimer = 7.0;
+  } else if (equippedElement === "grass") {
+    if (grassFieldCooldownTimer > 0) return;
+    const r = player.radius * 9;
+    const blades = [];
+    for (let i = 0; i < 40; i++) {
+      blades.push({ ox: (Math.random() - 0.5) * r * 1.6, oy: (Math.random() - 0.5) * r * 1.6, h: 8 + Math.random() * 12, sway: Math.random() * Math.PI * 2 });
+    }
+    grassFields.push({ x: player.x, y: player.y, radius: r, duration: 4.0, damage: 30, tickTimer: 0, tickInterval: 0.4, blades: blades });
+    grassFieldCooldownTimer = 7.0;
+  } else if (equippedElement === "lightning") {
+    if (lightningStormCooldownTimer > 0) return;
+    const sx = mouse.x, sy = mouse.y;
+    applyExplosionDamage(sx, sy, 60, 100);
+    lightningStrikes.push({ x: sx, y: sy, radius: 60, life: 0.5, maxLife: 0.5, isMain: true });
+    spawnParticles(sx, sy, 25, "#d0a0ff", 300, 0.6, 5);
+    const sorted = [];
+    for (let i = 0; i < enemies.length; i++) {
+      const d = Math.hypot(enemies[i].x - sx, enemies[i].y - sy);
+      sorted.push({ e: enemies[i], d: d });
+    }
+    sorted.sort(function(a, b) { return a.d - b.d; });
+    const targets = sorted.slice(0, 7);
+    for (const t of targets) {
+      t.e.health -= 100;
+      lightningStrikes.push({ x: sx, y: sy, x2: t.e.x, y2: t.e.y, radius: 20, life: 0.4, maxLife: 0.4, isMain: false, zigzag: (function() { const z = []; for (let k = 0; k < 6; k++) z.push((Math.random() - 0.5) * 18); return z; })() });
+      spawnParticles(t.e.x, t.e.y, 6, "#d0a0ff", 180, 0.4, 3);
+      if (t.e.health <= 0) { const isB = t.e.isBoss; const idx = enemies.indexOf(t.e); if (idx !== -1) { enemies.splice(idx, 1); onEnemyKilled({ isBoss: isB }); } }
+    }
+    for (let i = targets.length; i < 7; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 120 + Math.random() * 160;
+      const ex = sx + Math.cos(a) * d, ey = sy + Math.sin(a) * d;
+      lightningStrikes.push({ x: sx, y: sy, x2: ex, y2: ey, radius: 15, life: 0.35, maxLife: 0.35, isMain: false, zigzag: (function() { const z = []; for (let k = 0; k < 6; k++) z.push((Math.random() - 0.5) * 18); return z; })() });
+    }
+    lightningStormCooldownTimer = 6.0;
+  } else if (equippedElement === "mechanic") {
+    if (mechanicSpinCooldownTimer > 0) return;
+    mechanicSpinActiveTimer = 6.0;
+    mechanicSpinCooldownTimer = 8.0;
+    mechanicSpinTickTimer = 0;
+    mechanicSpinAngle = 0;
+    spawnParticles(player.x, player.y, 20, "#c0c8d0", 200, 0.5, 4);
+  } else if (equippedElement === "kai") {
+    if (kaiFieldCooldownTimer > 0) return;
+    const r = 300;
+    kaiFields.push({
+      x: player.x, y: player.y,
+      radius: r, duration: 6.0,
+      damage: 50, tickTimer: 0, tickInterval: 0.4,
+      swirl: 0, particles: (function() {
+        const arr = [];
+        for (let i = 0; i < 30; i++) {
+          arr.push({ a: Math.random() * Math.PI * 2, d: Math.random() * r, life: 0.6 + Math.random() * 0.6 });
+        }
+        return arr;
+      })()
+    });
+    kaiFieldCooldownTimer = 9.0;
+    spawnParticles(player.x, player.y, 30, "#e080ff", 220, 0.7, 4);
+  } else if (equippedElement === "polar") {
+    if (polarSpinCooldownTimer > 0) return;
+    polarSpinActiveTimer = 8.0; polarSpinCooldownTimer = 8.5; polarSpinTickTimer = 0; polarSpinAngle = 0;
+    spawnParticles(player.x, player.y, 35, "#e6fbff", 280, 0.7, 5);
+  } else if (equippedElement === "iceberg") {
+    if (icebergFCooldownTimer > 0) return;
+    icebergStormTimer = 3.0; icebergStormTickTimer = 0;
+    icebergFCooldownTimer = 8.0;
+    spawnParticles(player.x, player.y, 55, "#d8f7ff", 360, 0.9, 5);
+  } else if (equippedElement === "lava") {
+    if (lavaFCooldownTimer > 0) return;
+    lavaBallTimer = 5; lavaBallTickTimer = 0; lavaBallInvulnerable = true; lavaFCooldownTimer = 12;
+    spawnParticles(player.x, player.y, 45, "#ff5a18", 360, 0.8, 5);
+  } else if (equippedElement === "volcano") {
+    if (volcanoFCooldownTimer > 0) return;
+    volcanoFCooldownTimer = 12;
+    for (let i = 0; i < 10; i++) volcanoShots.push({ x: player.x, y: player.y, speed: 330, radius: 14, damage: 10000, life: 6, targetId: null, delay: i * 0.09 });
+    spawnParticles(player.x, player.y, 50, "#ff3b0b", 340, 0.8, 5);
+  } else if (equippedElement === "hunter") {
+    if (hunterFCooldownTimer > 0) return;
+    // Full-map bullet storm: three seconds total, dealing 2,000 damage to every
+    // enemy once per second (three ticks if the ability runs its full duration).
+    hunterFZone = { duration: 3, elapsed: 0, tickTimer: 0, ticks: 0 };
+    hunterFWavesLeft = 0; hunterFWaveTimer = 0; hunterFCooldownTimer = 7.0;
+    spawnParticles(player.x, player.y, 34, "#c18a50", 300, 0.7, 5);
+  } else if (equippedElement === "carter") {
+    if (carterFCooldownTimer > 0) return;
+    carterLightningTimer = 2.0; carterLightningTick = 0; carterFCooldownTimer = 8.0;
+    // Immediate first map-wide lightning strike; another strike follows after one second.
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const enemy = enemies[i]; enemy.health -= 2000;
+      lightningStrikes.push({ x: player.x, y: player.y, x2: enemy.x, y2: enemy.y, radius: 22, life: 0.5, maxLife: 0.5, isMain: false, zigzag: Array.from({length:7}, () => (Math.random()-0.5)*26) });
+      spawnParticles(enemy.x, enemy.y, 12, "#fff66a", 260, 0.45, 4);
+      if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(i, 1); onEnemyKilled({ isBoss: isB }); }
+    }
+    spawnParticles(player.x, player.y, 40, "#fff66a", 340, 0.7, 5);
+  } else if (equippedElement === "nickson") {
+    if (nicksonShockCooldownTimer > 0) return;
+    nicksonWaveTimer = 0.75; nicksonWaveRadius = 0; nicksonShockCooldownTimer = 6.0;
+    // A map-wide shockwave hits every enemy once for 200 damage.
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const enemy = enemies[i]; enemy.health -= 200;
+      spawnParticles(enemy.x, enemy.y, 7, "#66f0ff", 220, 0.45, 4);
+      if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(i, 1); onEnemyKilled({ isBoss: isB }); }
+    }
+    spawnParticles(player.x, player.y, 45, "#66f0ff", 420, 0.8, 5);
+  }
+}
+
+function rollRaidCrate() {
+  if (raidCoins < 50) { raidCrateMessage = "Need 50 Raid Coins to roll a crate!"; return; }
+  raidCoins -= 50;
+  if (Math.random() < 0.01) {
+    unlockedElements.volcano = true;
+    raidCrateMessage = "VOLCANO UNLOCKED! (1%)";
+    equippedElement = "volcano";
+  } else {
+    unlockedElements.lava = true;
+    raidCrateMessage = "LAVA UNLOCKED! (99%)";
+    equippedElement = "lava";
+  }
+  saveGameData();
+}
+
+function damageRaidEnemy(enemy, damage) {
+  if (!enemy || !enemies.includes(enemy)) return;
+  enemy.health -= damage;
+  spawnParticles(enemy.x, enemy.y, 7, "#ff6a21", 190, 0.4, 4);
+  if (enemy.health <= 0) {
+    const isB = enemy.isBoss;
+    const idx = enemies.indexOf(enemy);
+    if (idx !== -1) { enemies.splice(idx, 1); onEnemyKilled({ isBoss: isB }); }
+  }
+}
+
+function rollGacha(fast) {
+  if (money < 10) { lastRollResult = "Need at least 10 Money to Roll!"; return; }
+  money -= 10;
+  // The two rarest elements are rolled first so each keeps its advertised chance.
+  let result;
+  const rareRoll = Math.random();
+  if (rareRoll < 0.0001) {
+    unlockedElements.iceberg = true;
+    result = { key: "iceberg", name: "ICEBERG (BLIZZARDV2)", rate: "0.01%", color: "#d8f7ff", msg: "ULTRA MYTHIC ROLL: ICEBERG (BLIZZARDV2) (0.01%)!" };
+  } else if (rareRoll < 0.0006) {
+    unlockedElements.polar = true;
+    result = { key: "polar", name: "POLAR", rate: "0.05%", color: "#b9f4ff", msg: "MYTHIC ROLL: POLAR ELEMENT (0.05%)!" };
+  } else {
+  const rand = Math.random() * 100;
+  if (rand < 26) {
+    unlockedElements.sand = true;
+    result = { key: "sand", name: "SAND", rate: "26%", color: "#cca700", msg: "Rolled: SAND Ability Set (26%)!" };
+  } else if (rand < 43) {
+    unlockedElements.smoke = true;
+    result = { key: "smoke", name: "SMOKE", rate: "17%", color: "#00bfff", msg: "Rolled: SMOKE Ability Set (17%)!" };
+  } else if (rand < 57) {
+    unlockedElements.grass = true;
+    result = { key: "grass", name: "GRASS", rate: "14%", color: "#4ec44e", msg: "Rolled: GRASS Ability Set (14%)!" };
+  } else if (rand < 68) {
+    unlockedElements.kai = true;
+    result = { key: "kai", name: "KAI", rate: "11%", color: "#d870ff", msg: "Rolled: KAI Ability Set (11%)!" };
+  } else if (rand < 73) {
+    unlockedElements.bomb = true;
+    result = { key: "bomb", name: "BOMB", rate: "5%", color: "#ffcc00", msg: "Rolled: BOMB Ability Set (5%)!" };
+  } else if (rand < 78) {
+    unlockedElements.flame = true;
+    result = { key: "flame", name: "FLAME", rate: "5%", color: "#ff4500", msg: "Rolled: FLAME Ability Set (5%)!" };
+  } else if (rand < 82) {
+    unlockedElements.lightning = true;
+    result = { key: "lightning", name: "LIGHTNING", rate: "4%", color: "#c060ff", msg: "Rolled: LIGHTNING Ability Set (4%)!" };
+  } else if (rand < 83) {
+    unlockedElements.mechanic = true;
+    result = { key: "mechanic", name: "MECHANIC", rate: "1%", color: "#a0b0c0", msg: "Rolled: MECHANIC Ability Set (1%)!" };
+  } else if (rand < 84) {
+    unlockedElements.blizzard = true;
+    result = { key: "blizzard", name: "BLIZZARD", rate: "1%", color: "#7ec8ff", msg: "Rolled: BLIZZARD Ability Set (1%)!" };
+  } else if (rand < 84.5) {
+    unlockedElements.buh = true;
+    result = { key: "buh", name: "BUH", rate: "0.5%", color: "#ff2288", msg: "Rolled: BUH Ability Set (0.5%)!" };
+  } else if (rand < 84.6) {
+    // The gacha card is called HUNT, but the actual rolled element is HUNTER.
+    unlockedElements.hunter = true;
+    result = { key: "hunter", name: "HUNTER", rate: "0.1%", color: "#c18a50", msg: "MYTHIC ROLL: HUNTER ELEMENT (0.1%)!" };
+  } else if (rand < 85.6) {
+    unlockedElements.nickson = true;
+    result = { key: "nickson", name: "NICKSON", rate: "1%", color: "#66f0ff", msg: "RARE ROLL: NICKSON (1%)!" };
+  } else if (rand < 85.67) {
+    unlockedElements.carter = true;
+    result = { key: "carter", name: "CARTER", rate: "0.07%", color: "#fff66a", msg: "ULTRA RARE ROLL: CARTER (0.07%)!" };
+  } else {
+    maxHealth += 25;
+    health = maxHealth;
+    result = { key: "stat", name: "STAT BOOST", rate: "14.33%", color: "#20c95c", msg: "Rolled: +25 Max Health (14.33%)!" };
+  }
+  }
+  saveGameData();
+  // Fast roll skips the chest animation.
+  if (fast) {
+    gachaState = "idle"; gachaTimer = 0; gachaResult = result; lastRollResult = result.msg;
+  } else {
+    gachaState = "shaking"; gachaTimer = 1.0; gachaResult = result;
+  }
+}
+
+function update(deltaTime) {
+  if (cutscene) {
+    cutscene.timer -= deltaTime;
+    if (screenShake > 0) screenShake = Math.max(0, screenShake - deltaTime * 2);
+    if (cutscene.timer <= 0) {
+      const type = cutscene.type;
+      cutscene = null;
+      if (type === "death") {
+        goToLobby();
+        return;
+      }
+    }
+    // Freeze the entire game during boss intro and the YOU DIED screen.
+    if (cutscene && (cutscene.type === "bossIntro" || cutscene.type === "death")) return;
+  }
+
+  if (isPaused) return;
+  bgTime += deltaTime;
+  lavaGCooldownTimer = Math.max(0, lavaGCooldownTimer - deltaTime);
+  lavaFCooldownTimer = Math.max(0, lavaFCooldownTimer - deltaTime);
+  volcanoGCooldownTimer = Math.max(0, volcanoGCooldownTimer - deltaTime);
+  volcanoFCooldownTimer = Math.max(0, volcanoFCooldownTimer - deltaTime);
+  if (lavaBallTimer > 0) {
+    lavaBallTimer = Math.max(0, lavaBallTimer - deltaTime); lavaBallTickTimer -= deltaTime;
+    lavaBallInvulnerable = lavaBallTimer > 0;
+    if (lavaBallTickTimer <= 0 && lavaBallTimer > 0) {
+      lavaBallTickTimer = 0.5;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const e = enemies[j];
+        if (Math.hypot(e.x-player.x, e.y-player.y) <= player.radius + e.radius + 12) damageRaidEnemy(e, 3000);
+      }
+    }
+  } else lavaBallInvulnerable = false;
+  for (let i = magmaShots.length - 1; i >= 0; i--) {
+    const shot = magmaShots[i]; shot.x += shot.vx * deltaTime; shot.y += shot.vy * deltaTime; shot.life -= deltaTime;
+    let hit = false;
+    for (const e of enemies) if (Math.hypot(e.x-shot.x, e.y-shot.y) <= e.radius + shot.radius) { hit = true; break; }
+    if (hit || shot.life <= 0 || shot.x < 0 || shot.x > canvas.width || shot.y < 0 || shot.y > canvas.height) {
+      lavaPuddles.push({ x: shot.x, y: shot.y, radius: 78, life: 4, tick: 0, damage: 2000, color: "lava" });
+      spawnParticles(shot.x, shot.y, 15, "#ff4b16", 210, 0.45, 4); magmaShots.splice(i, 1);
+    }
+  }
+  for (let i = volcanoShots.length - 1; i >= 0; i--) {
+    const shot = volcanoShots[i]; shot.delay -= deltaTime; if (shot.delay > 0) continue;
+    if (shot.targetId == null || !enemies.some(e => e.id === shot.targetId)) {
+      const t = nearestEnemyTo(shot.x, shot.y); shot.targetId = t ? t.id : null;
+    }
+    const target = enemies.find(e => e.id === shot.targetId);
+    if (!target) { shot.life -= deltaTime; if (shot.life <= 0) volcanoShots.splice(i, 1); continue; }
+    const a = Math.atan2(target.y-shot.y, target.x-shot.x); shot.x += Math.cos(a)*shot.speed*deltaTime; shot.y += Math.sin(a)*shot.speed*deltaTime; shot.life -= deltaTime;
+    if (Math.hypot(target.x-shot.x, target.y-shot.y) <= target.radius + shot.radius) {
+      damageRaidEnemy(target, shot.damage); spawnParticles(shot.x, shot.y, 22, "#ffb01f", 260, 0.55, 5); volcanoShots.splice(i, 1);
+    } else if (shot.life <= 0) volcanoShots.splice(i, 1);
+  }
+  for (let i = lavaPuddles.length - 1; i >= 0; i--) {
+    const puddle = lavaPuddles[i]; puddle.life -= deltaTime; puddle.tick -= deltaTime;
+    if (puddle.tick <= 0 && puddle.life > 0) {
+      puddle.tick = 1;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const e = enemies[j]; if (Math.hypot(e.x-puddle.x, e.y-puddle.y) <= puddle.radius + e.radius) damageRaidEnemy(e, puddle.damage);
+      }
+    }
+    if (puddle.life <= 0) lavaPuddles.splice(i, 1);
+  }
+
+  if (beamCooldownTimer > 0) beamCooldownTimer = Math.max(0, beamCooldownTimer - deltaTime);
+  if (auraCooldownTimer > 0) auraCooldownTimer = Math.max(0, auraCooldownTimer - deltaTime);
+  if (meleeCooldownTimer > 0) meleeCooldownTimer = Math.max(0, meleeCooldownTimer - deltaTime);
+  if (bombMiniCooldownTimer > 0) bombMiniCooldownTimer = Math.max(0, bombMiniCooldownTimer - deltaTime);
+  if (bombBigCooldownTimer > 0) bombBigCooldownTimer = Math.max(0, bombBigCooldownTimer - deltaTime);
+  if (buhBarrageCooldownTimer > 0) buhBarrageCooldownTimer = Math.max(0, buhBarrageCooldownTimer - deltaTime);
+  if (buhShrineCooldownTimer > 0) buhShrineCooldownTimer = Math.max(0, buhShrineCooldownTimer - deltaTime);
+  if (grassShotCooldownTimer > 0) grassShotCooldownTimer = Math.max(0, grassShotCooldownTimer - deltaTime);
+  if (grassFieldCooldownTimer > 0) grassFieldCooldownTimer = Math.max(0, grassFieldCooldownTimer - deltaTime);
+  if (lightningBoltCooldownTimer > 0) lightningBoltCooldownTimer = Math.max(0, lightningBoltCooldownTimer - deltaTime);
+  if (lightningStormCooldownTimer > 0) lightningStormCooldownTimer = Math.max(0, lightningStormCooldownTimer - deltaTime);
+  if (mechanicClawCooldownTimer > 0) mechanicClawCooldownTimer = Math.max(0, mechanicClawCooldownTimer - deltaTime);
+  if (mechanicSpinCooldownTimer > 0) mechanicSpinCooldownTimer = Math.max(0, mechanicSpinCooldownTimer - deltaTime);
+  if (kaiOrbCooldownTimer > 0) kaiOrbCooldownTimer = Math.max(0, kaiOrbCooldownTimer - deltaTime);
+  if (kaiFieldCooldownTimer > 0) kaiFieldCooldownTimer = Math.max(0, kaiFieldCooldownTimer - deltaTime);
+  if (polarFrostCooldownTimer > 0) polarFrostCooldownTimer = Math.max(0, polarFrostCooldownTimer - deltaTime);
+  if (polarSpinCooldownTimer > 0) polarSpinCooldownTimer = Math.max(0, polarSpinCooldownTimer - deltaTime);
+  if (icebergMeleeCooldownTimer > 0) icebergMeleeCooldownTimer = Math.max(0, icebergMeleeCooldownTimer - deltaTime);
+  if (icebergGCooldownTimer > 0) icebergGCooldownTimer = Math.max(0, icebergGCooldownTimer - deltaTime);
+  if (icebergFCooldownTimer > 0) icebergFCooldownTimer = Math.max(0, icebergFCooldownTimer - deltaTime);
+  if (carterFCooldownTimer > 0) carterFCooldownTimer = Math.max(0, carterFCooldownTimer - deltaTime);
+  if (carterGCooldownTimer > 0) carterGCooldownTimer = Math.max(0, carterGCooldownTimer - deltaTime);
+  if (carterLightningTimer > 0) {
+    carterLightningTimer = Math.max(0, carterLightningTimer - deltaTime); carterLightningTick += deltaTime;
+    if (carterLightningTick >= 1 && carterLightningTimer > 0) {
+      carterLightningTick -= 1;
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i]; enemy.health -= 2000;
+        lightningStrikes.push({ x: player.x, y: player.y, x2: enemy.x, y2: enemy.y, radius: 22, life: 0.5, maxLife: 0.5, isMain: false, zigzag: Array.from({length:7}, () => (Math.random()-0.5)*26) });
+        spawnParticles(enemy.x, enemy.y, 12, "#fff66a", 260, 0.45, 4);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(i, 1); onEnemyKilled({ isBoss: isB }); }
+      }
+    }
+  }
+  if (carterAuraTimer > 0) {
+    carterAuraTimer = Math.max(0, carterAuraTimer - deltaTime); carterAuraTick += deltaTime;
+    while (carterAuraTick >= 0.5 && carterAuraTimer >= 0) {
+      carterAuraTick -= 0.5;
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+        if (Math.hypot(enemy.x-player.x, enemy.y-player.y) <= 170 + enemy.radius) {
+          enemy.health -= 2000;
+          lightningStrikes.push({ x: player.x, y: player.y, x2: enemy.x, y2: enemy.y, radius: 22, life: 0.35, maxLife: 0.35, isMain: false, zigzag: Array.from({length:6}, () => (Math.random()-0.5)*24) });
+          spawnParticles(enemy.x, enemy.y, 10, "#fff66a", 240, 0.4, 4);
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(i, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+  }
+  if (nicksonShockCooldownTimer > 0) nicksonShockCooldownTimer = Math.max(0, nicksonShockCooldownTimer - deltaTime);
+  if (nicksonGrowCooldownTimer > 0) nicksonGrowCooldownTimer = Math.max(0, nicksonGrowCooldownTimer - deltaTime);
+  if (nicksonGrowTimer > 0) nicksonGrowTimer = Math.max(0, nicksonGrowTimer - deltaTime);
+  if (nicksonSuctionTimer > 0) nicksonSuctionTimer = Math.max(0, nicksonSuctionTimer - deltaTime);
+  if (nicksonWaveTimer > 0) { nicksonWaveTimer = Math.max(0, nicksonWaveTimer - deltaTime); nicksonWaveRadius += Math.max(canvas.width, canvas.height) * deltaTime * 1.8; }
+  if (hunterSpaceCooldownTimer > 0) hunterSpaceCooldownTimer = Math.max(0, hunterSpaceCooldownTimer - deltaTime);
+  if (hunterGCooldownTimer > 0) hunterGCooldownTimer = Math.max(0, hunterGCooldownTimer - deltaTime);
+  if (hunterFCooldownTimer > 0) hunterFCooldownTimer = Math.max(0, hunterFCooldownTimer - deltaTime);
+  if (equippedElement === "hunter" && hunterFZone) {
+    const z = hunterFZone; z.elapsed += deltaTime; z.tickTimer += deltaTime;
+    while (z.tickTimer >= 1 && z.ticks < 3) {
+      z.tickTimer -= 1; z.ticks++;
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i]; e.health -= 2000; spawnParticles(e.x,e.y,14,"#d99a58",240,0.5,5);
+        if (e.health <= 0) { const isB=e.isBoss; enemies.splice(i,1); onEnemyKilled({isBoss:isB}); }
+      }
+    }
+    if (z.elapsed >= z.duration) hunterFZone = null;
+  }
+  for (let i = hunterExplosions.length - 1; i >= 0; i--) { hunterExplosions[i].life -= deltaTime; if (hunterExplosions[i].life <= 0) hunterExplosions.splice(i,1); }
+
+  if (vBoostCooldownTimer > 0) vBoostCooldownTimer = Math.max(0, vBoostCooldownTimer - deltaTime);
+  if (vBoostActiveTimer > 0) {
+    vBoostActiveTimer = Math.max(0, vBoostActiveTimer - deltaTime);
+    if (Math.random() < 0.5) {
+      spawnParticles(player.x + (Math.random() - 0.5) * player.radius * 2, player.y + (Math.random() - 0.5) * player.radius * 2, 1, vBoostMultiplier >= 3 ? "#00ffff" : "#ffee55", 40, 0.4, 3);
+    }
+    if (vBoostActiveTimer <= 0) vBoostMultiplier = 1;
+  }
+
+  let applyAuraDamage = false;
+  if (auraActiveTimer > 0) {
+    auraActiveTimer = Math.max(0, auraActiveTimer - deltaTime);
+    auraDamageTickTimer -= deltaTime;
+    if (auraDamageTickTimer <= 0) { applyAuraDamage = true; auraDamageTickTimer = 0.5; }
+  }
+  if (activeLaser) { activeLaser.duration -= deltaTime; if (activeLaser.duration <= 0) activeLaser = null; }
+
+  if (smokeShotCooldownTimer > 0) smokeShotCooldownTimer = Math.max(0, smokeShotCooldownTimer - deltaTime);
+  if (smokeDashCooldownTimer > 0) smokeDashCooldownTimer = Math.max(0, smokeDashCooldownTimer - deltaTime);
+
+  if (smokeDashActiveTimer > 0) {
+    smokeDashActiveTimer = Math.max(0, smokeDashActiveTimer - deltaTime);
+    player.speed = player.baseSpeed * 1.5;
+    smokeBombSpawnTimer -= deltaTime;
+    if (smokeBombSpawnTimer <= 0) {
+      const puffs = [];
+      for (let i = 0; i < 5; i++) puffs.push({ a: Math.random() * Math.PI * 2, d: Math.random() * 20, life: 1 + Math.random() * 1.0, size: 15 + Math.random() * 20 });
+      smokeBombs.push({ x: player.x, y: player.y, radius: 45, duration: 2.0, damageTickTimer: 0, puffs: puffs });
+      smokeBombSpawnTimer = 0.3;
+    }
+    if (Math.random() < 0.6) spawnParticles(player.x, player.y, 1, "#888888", 40, 0.5, 5);
+  } else {
+    player.speed = player.baseSpeed;
+  }
+  if (equippedElement === "nickson") player.speed = player.baseSpeed * 0.35;
+  if (vBoostActiveTimer > 0) player.speed = player.baseSpeed * vBoostMultiplier;
+
+  if (flameSpinCooldownTimer > 0) flameSpinCooldownTimer = Math.max(0, flameSpinCooldownTimer - deltaTime);
+  if (flameOrbCooldownTimer > 0) flameOrbCooldownTimer = Math.max(0, flameOrbCooldownTimer - deltaTime);
+  if (iceSpikeCooldownTimer > 0) iceSpikeCooldownTimer = Math.max(0, iceSpikeCooldownTimer - deltaTime);
+  if (blizzardFieldCooldownTimer > 0) blizzardFieldCooldownTimer = Math.max(0, blizzardFieldCooldownTimer - deltaTime);
+
+  if (flameSpinActiveTimer > 0) {
+    flameSpinActiveTimer = Math.max(0, flameSpinActiveTimer - deltaTime);
+    flameSpinAngle += deltaTime * 12;
+    flameSpinTickTimer -= deltaTime;
+    if (flameSpinTickTimer <= 0) {
+      flameSpinTickTimer = 0.3;
+      const beamLen = 140;
+      const l1x = player.x + Math.cos(flameSpinAngle) * beamLen;
+      const l1y = player.y + Math.sin(flameSpinAngle) * beamLen;
+      const l2x = player.x + Math.cos(flameSpinAngle + Math.PI) * beamLen;
+      const l2y = player.y + Math.sin(flameSpinAngle + Math.PI) * beamLen;
+      const HB = 90;
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+        if (Math.hypot(enemy.x - l1x, enemy.y - l1y) <= HB + enemy.radius || Math.hypot(enemy.x - l2x, enemy.y - l2y) <= HB + enemy.radius) {
+          enemy.health -= 100;
+          spawnParticles(enemy.x, enemy.y, 4, "#ffaa33", 130, 0.4, 3);
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(i, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+  }
+
+  if (mechanicSpinActiveTimer > 0) {
+    mechanicSpinActiveTimer = Math.max(0, mechanicSpinActiveTimer - deltaTime);
+    mechanicSpinAngle += deltaTime * 10;
+    mechanicSpinTickTimer -= deltaTime;
+    if (mechanicSpinTickTimer <= 0) {
+      mechanicSpinTickTimer = 0.15;
+      const reach = player.radius + 110;
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const enemy = enemies[i];
+        const dist = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+        if (dist <= reach + enemy.radius) {
+          enemy.health -= 300;
+          spawnParticles(enemy.x, enemy.y, 5, "#d0d8e0", 160, 0.35, 3);
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(i, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+  }
+
+  // POLAR: full-map frost wave, 300 damage every 0.07 seconds for 8 seconds.
+  if (polarFrostActiveTimer > 0) {
+    polarFrostActiveTimer = Math.max(0, polarFrostActiveTimer - deltaTime);
+    polarFrostTickTimer -= deltaTime;
+    if (polarFrostTickTimer <= 0) {
+      polarFrostTickTimer = 0.07;
+      const polarRadius = Math.max(canvas.width, canvas.height) * 0.25;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        if (Math.hypot(enemy.x - player.x, enemy.y - player.y) > polarRadius + enemy.radius) continue;
+        enemy.health -= 300; enemy.freezeTimer = Math.max(enemy.freezeTimer, 0.18);
+        spawnParticles(enemy.x, enemy.y, 2, "#b9f4ff", 120, 0.25, 3);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+      }
+    }
+  }
+  // POLAR: giant rotating laser tracks the player and deals 500 damage per 0.1s tick.
+  if (polarSpinActiveTimer > 0) {
+    polarSpinActiveTimer = Math.max(0, polarSpinActiveTimer - deltaTime);
+    polarSpinAngle += deltaTime * 8;
+    polarSpinTickTimer -= deltaTime;
+    if (polarSpinTickTimer <= 0) {
+      polarSpinTickTimer = 0.1;
+      const reach = Math.max(canvas.width, canvas.height) * 0.24;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        const dx = enemy.x - player.x, dy = enemy.y - player.y;
+        const dist = Math.hypot(dx, dy);
+        let diff = Math.atan2(dy, dx) - polarSpinAngle;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        if (dist <= reach + enemy.radius && Math.abs(diff) < 0.22) {
+          enemy.health -= 500; spawnParticles(enemy.x, enemy.y, 5, "#e6fbff", 180, 0.35, 4);
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+  }
+
+  // ICEBERG (BLIZZARDV2): a sustained mouse-aimed beam.
+  for (let i = icebergBeams.length - 1; i >= 0; i--) {
+    const beam = icebergBeams[i];
+    beam.duration -= deltaTime;
+    beam.angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    beam.tickTimer -= deltaTime;
+    if (beam.tickTimer <= 0 && beam.duration > 0) {
+      beam.tickTimer = 0.5;
+      damageIcebergBeam(beam, 300);
+    }
+    if (beam.duration <= 0) icebergBeams.splice(i, 1);
+  }
+  // G: a giant ice wall crosses the arena from left to right and hits each enemy once.
+  for (let i = icebergWalls.length - 1; i >= 0; i--) {
+    const wall = icebergWalls[i]; wall.x += wall.speed * deltaTime; wall.life -= deltaTime;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const enemy = enemies[j];
+      if (!wall.hit.has(enemy) && Math.abs(enemy.x - wall.x) <= wall.width / 2 + enemy.radius) {
+        wall.hit.add(enemy); enemy.health -= 5000;
+        spawnParticles(enemy.x, enemy.y, 14, "#d8f7ff", 300, 0.55, 5);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+      }
+    }
+    if (wall.life <= 0 || wall.x > canvas.width + wall.width) icebergWalls.splice(i, 1);
+  }
+  // Four autonomous mini-icebergs home onto enemies and disappear after 20,000 total damage each.
+  for (let i = icebergMinis.length - 1; i >= 0; i--) {
+    const b = icebergMinis[i]; b.life -= deltaTime; b.spin += deltaTime * 5;
+    const target = nearestEnemyTo(b.x, b.y);
+    if (target) {
+      const a = Math.atan2(target.y - b.y, target.x - b.x), speed = 440;
+      b.vx += (Math.cos(a) * speed - b.vx) * Math.min(1, deltaTime * 3.5);
+      b.vy += (Math.sin(a) * speed - b.vy) * Math.min(1, deltaTime * 3.5);
+    }
+    b.x += b.vx * deltaTime; b.y += b.vy * deltaTime;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const e = enemies[j]; const lastHit = b.hitCooldowns.get(e.id) || 0;
+      if (lastHit > 0) { b.hitCooldowns.set(e.id, Math.max(0, lastHit - deltaTime)); continue; }
+      if (Math.hypot(e.x - b.x, e.y - b.y) <= e.radius + b.radius) {
+        const dealt = Math.min(b.damage, b.maxDamage - b.damageDealt);
+        const actualDamage = Math.min(dealt, Math.max(0, e.health));
+        e.health -= dealt; b.damageDealt += actualDamage; b.hitCooldowns.set(e.id, 0.35);
+        spawnParticles(e.x, e.y, 10, "#d8f7ff", 250, 0.4, 4);
+        if (e.health <= 0) { const isB = e.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        if (b.damageDealt >= b.maxDamage) break;
+      }
+    }
+    if (b.damageDealt >= b.maxDamage || b.life <= 0) icebergMinis.splice(i, 1);
+  }
+
+  // F: map-wide blizzard storm, dealing 1,000 damage to every enemy every 0.1 seconds.
+  if (icebergStormTimer > 0) {
+    icebergStormTimer = Math.max(0, icebergStormTimer - deltaTime);
+    icebergStormTickTimer -= deltaTime;
+    if (icebergStormTickTimer <= 0) {
+      icebergStormTickTimer = 0.1;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j]; enemy.health -= 1000;
+        spawnParticles(enemy.x, enemy.y, 6, "#d8f7ff", 240, 0.35, 4);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+      }
+    }
+  }
+
+  // KAI ORBS (homing)
+  for (let i = kaiOrbs.length - 1; i >= 0; i--) {
+    const b = kaiOrbs[i];
+    if (b.homing) {
+      const t = nearestEnemyTo(b.x, b.y);
+      if (t) {
+        const cur = Math.atan2(b.vy, b.vx);
+        const want = Math.atan2(t.y - b.y, t.x - b.x);
+        let diff = want - cur;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        const turn = Math.min(Math.abs(diff), 5.0 * deltaTime) * Math.sign(diff);
+        const na = cur + turn;
+        const sp = Math.hypot(b.vx, b.vy);
+        b.vx = Math.cos(na) * sp; b.vy = Math.sin(na) * sp;
+      }
+    }
+    b.trail.push({ x: b.x, y: b.y, life: 0.3 });
+    if (b.trail.length > 8) b.trail.shift();
+    for (let t = 0; t < b.trail.length; t++) b.trail[t].life -= deltaTime;
+    b.x += b.vx * deltaTime; b.y += b.vy * deltaTime;
+    b.spinAngle += deltaTime * 8;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const enemy = enemies[j];
+      if (b.hitIds.has(enemy.id)) continue;
+      if (Math.hypot(b.x - enemy.x, b.y - enemy.y) <= b.radius + enemy.radius) {
+        enemy.health -= b.damage;
+        b.hitIds.add(enemy.id);
+        spawnParticles(enemy.x, enemy.y, 6, "#e080ff", 160, 0.4, 3);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+      }
+    }
+    if (b.x < -100 || b.x > canvas.width + 100 || b.y < -100 || b.y > canvas.height + 100) kaiOrbs.splice(i, 1);
+  }
+
+  // KAI FIELDS (gas)
+  for (let i = kaiFields.length - 1; i >= 0; i--) {
+    const f = kaiFields[i];
+    f.duration -= deltaTime;
+    f.tickTimer -= deltaTime;
+    f.swirl = (f.swirl || 0) + deltaTime * 0.8;
+    for (const p of f.particles) {
+      p.life -= deltaTime;
+      if (p.life <= 0) { p.life = 0.6 + Math.random() * 0.6; p.a = Math.random() * Math.PI * 2; p.d = Math.random() * f.radius; }
+    }
+    if (f.tickTimer <= 0) {
+      f.tickTimer = f.tickInterval;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        if (Math.hypot(f.x - enemy.x, f.y - enemy.y) <= f.radius + enemy.radius) {
+          enemy.health -= f.damage;
+          spawnParticles(enemy.x, enemy.y, 3, "#e080ff", 100, 0.4, 3);
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+    if (f.duration <= 0) kaiFields.splice(i, 1);
+  }
+
+  for (let i = meleeSlashes.length - 1; i >= 0; i--) {
+    meleeSlashes[i].life -= deltaTime;
+    if (meleeSlashes[i].life <= 0) meleeSlashes.splice(i, 1);
+  }
+  for (let i = bombExplosions.length - 1; i >= 0; i--) {
+    const ex = bombExplosions[i];
+    ex.life -= deltaTime;
+    if (ex.sparks) for (let s = 0; s < ex.sparks.length; s++) ex.sparks[s].life -= deltaTime;
+    if (ex.life <= 0) bombExplosions.splice(i, 1);
+  }
+  for (let i = particleFx.length - 1; i >= 0; i--) {
+    const p = particleFx[i];
+    p.x += p.vx * deltaTime; p.y += p.vy * deltaTime;
+    p.vx *= 0.94; p.vy *= 0.94;
+    p.life -= deltaTime;
+    if (p.life <= 0) particleFx.splice(i, 1);
+  }
+
+  for (let i = mechanicClaws.length - 1; i >= 0; i--) {
+    const c = mechanicClaws[i];
+    c.life -= deltaTime;
+    c.extend = Math.min(c.maxExtend, c.extend + 800 * deltaTime);
+    c.x += c.vx * deltaTime; c.y += c.vy * deltaTime;
+    c.trail.push({ x: c.x, y: c.y, life: 0.25 });
+    if (c.trail.length > 8) c.trail.shift();
+    for (let t = 0; t < c.trail.length; t++) c.trail[t].life -= deltaTime;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const enemy = enemies[j];
+      if (c.hitIds.has(enemy.id)) continue;
+      if (Math.hypot(c.x - enemy.x, c.y - enemy.y) <= c.radius + enemy.radius) {
+        enemy.health -= c.damage;
+        c.hitIds.add(enemy.id);
+        spawnParticles(enemy.x, enemy.y, 10, "#c0c8d0", 220, 0.5, 4);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+      }
+    }
+    if (c.life <= 0 || c.x < -150 || c.x > canvas.width + 150 || c.y < -150 || c.y > canvas.height + 150) mechanicClaws.splice(i, 1);
+  }
+
+  for (let i = lightningBolts.length - 1; i >= 0; i--) {
+    const b = lightningBolts[i];
+    b.trail.push({ x: b.x, y: b.y, life: 0.3 });
+    if (b.trail.length > 12) b.trail.shift();
+    for (let t = 0; t < b.trail.length; t++) b.trail[t].life -= deltaTime;
+    b.x += b.vx * deltaTime; b.y += b.vy * deltaTime;
+    b.life -= deltaTime;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const enemy = enemies[j];
+      if (b.hitIds.has(enemy.id)) continue;
+      if (Math.hypot(b.x - enemy.x, b.y - enemy.y) <= b.radius + enemy.radius) {
+        enemy.health -= b.damage;
+        b.hitIds.add(enemy.id);
+        spawnParticles(enemy.x, enemy.y, 10, "#d0a0ff", 220, 0.5, 4);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+      }
+    }
+    if (b.life <= 0 || b.x < -100 || b.x > canvas.width + 100 || b.y < -100 || b.y > canvas.height + 100) lightningBolts.splice(i, 1);
+  }
+  for (let i = lightningStrikes.length - 1; i >= 0; i--) {
+    lightningStrikes[i].life -= deltaTime;
+    if (lightningStrikes[i].life <= 0) lightningStrikes.splice(i, 1);
+  }
+
+  for (let i = buhBullets.length - 1; i >= 0; i--) {
+    const b = buhBullets[i];
+    if (b.homing) {
+      const t = nearestEnemyTo(b.x, b.y);
+      if (t) {
+        const cur = Math.atan2(b.vy, b.vx);
+        const want = Math.atan2(t.y - b.y, t.x - b.x);
+        let diff = want - cur;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        const turn = Math.min(Math.abs(diff), 4.0 * deltaTime) * Math.sign(diff);
+        const na = cur + turn;
+        const sp = Math.hypot(b.vx, b.vy);
+        b.vx = Math.cos(na) * sp; b.vy = Math.sin(na) * sp;
+      }
+    }
+    b.trail.push({ x: b.x, y: b.y, life: 0.35 });
+    if (b.trail.length > 10) b.trail.shift();
+    for (let tI = 0; tI < b.trail.length; tI++) b.trail[tI].life -= deltaTime;
+    b.x += b.vx * deltaTime; b.y += b.vy * deltaTime;
+    b.spinAngle += deltaTime * 8;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const enemy = enemies[j];
+      if (b.hitIds.has(enemy.id)) continue;
+      if (Math.hypot(b.x - enemy.x, b.y - enemy.y) <= b.radius + enemy.radius) {
+        enemy.health -= b.damage;
+        b.hitIds.add(enemy.id);
+        spawnParticles(enemy.x, enemy.y, 8, "#ff66aa", 200, 0.5, 4);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+      }
+    }
+    if (b.x < -100 || b.x > canvas.width + 100 || b.y < -100 || b.y > canvas.height + 100) buhBullets.splice(i, 1);
+  }
+
+  for (let i = buhShrines.length - 1; i >= 0; i--) {
+    const shrine = buhShrines[i];
+    shrine.duration -= deltaTime;
+    shrine.tickTimer -= deltaTime;
+    shrine.rune += deltaTime * 2;
+    if (shrine.tickTimer <= 0) {
+      shrine.tickTimer = shrine.tickInterval;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        if (Math.hypot(shrine.x - enemy.x, shrine.y - enemy.y) <= shrine.radius + enemy.radius) {
+          enemy.health -= shrine.damage;
+          shrineSlashFx.push({ x: enemy.x, y: enemy.y, angle: Math.random() * Math.PI * 2, life: 0.12, maxLife: 0.12, len: 20 + Math.random() * 10 });
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+    if (shrine.duration <= 0) buhShrines.splice(i, 1);
+  }
+  for (let i = shrineSlashFx.length - 1; i >= 0; i--) {
+    shrineSlashFx[i].life -= deltaTime;
+    if (shrineSlashFx[i].life <= 0) shrineSlashFx.splice(i, 1);
+  }
+
+  for (let i = grassShards.length - 1; i >= 0; i--) {
+    const s = grassShards[i];
+    s.trail.push({ x: s.x, y: s.y, life: 0.3 });
+    if (s.trail.length > 8) s.trail.shift();
+    for (let t = 0; t < s.trail.length; t++) s.trail[t].life -= deltaTime;
+    s.x += s.vx * deltaTime; s.y += s.vy * deltaTime;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const enemy = enemies[j];
+      if (s.hitIds.has(enemy.id)) continue;
+      if (Math.hypot(s.x - enemy.x, s.y - enemy.y) <= s.radius + enemy.radius) {
+        enemy.health -= s.damage;
+        s.hitIds.add(enemy.id);
+        spawnParticles(enemy.x, enemy.y, 6, "#90ee90", 160, 0.4, 3);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+      }
+    }
+    if (s.x < -50 || s.x > canvas.width + 50 || s.y < -50 || s.y > canvas.height + 50) grassShards.splice(i, 1);
+  }
+  for (let i = grassFields.length - 1; i >= 0; i--) {
+    const f = grassFields[i];
+    f.duration -= deltaTime;
+    f.tickTimer -= deltaTime;
+    for (const b of f.blades) b.sway += deltaTime * 3;
+    if (f.tickTimer <= 0) {
+      f.tickTimer = f.tickInterval;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        if (Math.hypot(f.x - enemy.x, f.y - enemy.y) <= f.radius + enemy.radius) {
+          enemy.health -= f.damage;
+          spawnParticles(enemy.x, enemy.y, 3, "#90ee90", 100, 0.35, 3);
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+    if (f.duration <= 0) grassFields.splice(i, 1);
+  }
+
+  for (let i = landMines.length - 1; i >= 0; i--) {
+    const m = landMines[i];
+    m.blink = (m.blink || 0) + deltaTime * 5;
+    if (m.exploded) { m.explodeTimer -= deltaTime; if (m.explodeTimer <= 0) landMines.splice(i, 1); continue; }
+    m.duration -= deltaTime;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const enemy = enemies[j];
+      if (Math.hypot(m.x - enemy.x, m.y - enemy.y) <= m.radius + enemy.radius) {
+        m.exploded = true; m.explodeTimer = 0.35;
+        const ex = { x: m.x, y: m.y, radius: 70, life: 0.35, maxLife: 0.35, damage: m.damage, sparks: [] };
+        for (let s = 0; s < 10; s++) ex.sparks.push({ a: Math.random() * Math.PI * 2, len: 15 + Math.random() * 25, life: 0.35 });
+        bombExplosions.push(ex);
+        spawnParticles(m.x, m.y, 12, "#ffcc44", 200, 0.4, 3);
+        applyExplosionDamage(m.x, m.y, 70, m.damage);
+        break;
+      }
+    }
+    if (m.duration <= 0 && !m.exploded) landMines.splice(i, 1);
+  }
+
+  for (let i = iceSpikes.length - 1; i >= 0; i--) {
+    const spike = iceSpikes[i];
+    spike.duration -= deltaTime;
+    if (!spike.impactApplied) {
+      spike.impactApplied = true;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        const insideH = Math.abs(enemy.x - spike.x) <= spike.w / 2 + enemy.radius && Math.abs(enemy.y - spike.y) <= spike.h / 2 + enemy.radius;
+        const insideV = Math.abs(enemy.y - spike.y) <= spike.w / 2 + enemy.radius && Math.abs(enemy.x - spike.x) <= spike.h / 2 + enemy.radius;
+        if (insideH || insideV) {
+          enemy.health -= spike.impactDamage;
+          enemy.freezeTimer = Math.max(enemy.freezeTimer, 3.0);
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+    spike.contactTimer -= deltaTime;
+    if (spike.contactTimer <= 0) {
+      spike.contactTimer = spike.contactTick;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        const insideH = Math.abs(enemy.x - spike.x) <= spike.w / 2 + enemy.radius && Math.abs(enemy.y - spike.y) <= spike.h / 2 + enemy.radius;
+        const insideV = Math.abs(enemy.y - spike.y) <= spike.w / 2 + enemy.radius && Math.abs(enemy.x - spike.x) <= spike.h / 2 + enemy.radius;
+        if (insideH || insideV) {
+          enemy.health -= spike.contactDamage;
+          enemy.freezeTimer = Math.max(enemy.freezeTimer, 1.5);
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+    if (spike.duration <= 0) iceSpikes.splice(i, 1);
+  }
+
+  for (let i = blizzardFields.length - 1; i >= 0; i--) {
+    const field = blizzardFields[i];
+    field.duration -= deltaTime;
+    field.swirl = (field.swirl || 0) + deltaTime * 1.2;
+    if (!field.impactApplied) {
+      field.impactApplied = true;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        if (Math.hypot(enemy.x - field.x, enemy.y - field.y) <= field.radius + enemy.radius) {
+          enemy.health -= field.impactDamage;
+          enemy.freezeTimer = Math.max(enemy.freezeTimer, 3.0);
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+    field.contactTimer -= deltaTime;
+    if (field.contactTimer <= 0) {
+      field.contactTimer = field.contactTick;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        if (Math.hypot(enemy.x - field.x, enemy.y - field.y) <= field.radius + enemy.radius) {
+          enemy.health -= field.contactDamage;
+          enemy.freezeTimer = Math.max(enemy.freezeTimer, 1.5);
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+    if (field.duration <= 0) blizzardFields.splice(i, 1);
+  }
+
+  let hx = 0, vy = 0;
+  if (keys.w) vy -= 1; if (keys.s) vy += 1;
+  if (keys.a) hx -= 1; if (keys.d) hx += 1;
+  if (hx !== 0 && vy !== 0) { hx *= 0.7071; vy *= 0.7071; }
+  player.x += hx * player.speed * deltaTime;
+  player.y += vy * player.speed * deltaTime;
+  player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+  player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    if (!p.trail) p.trail = [];
+    p.trail.push({ x: p.x, y: p.y, life: 0.3 });
+    if (p.trail.length > 8) p.trail.shift();
+    for (let t = 0; t < p.trail.length; t++) p.trail[t].life -= deltaTime;
+    p.x += p.vx * deltaTime; p.y += p.vy * deltaTime;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const enemy = enemies[j];
+      if (Math.hypot(p.x - enemy.x, p.y - enemy.y) < p.radius + enemy.radius) {
+        enemy.health -= p.damage;
+        spawnParticles(p.x, p.y, 8, "#cccccc", 150, 0.35, 3);
+        projectiles.splice(i, 1);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        break;
+      }
+    }
+  }
+
+  for (let i = hunterBullets.length - 1; i >= 0; i--) {
+    const b = hunterBullets[i];
+    if (b.persistent) {
+      for (const [id, time] of b.hitCooldowns) { const next = time - deltaTime; if (next <= 0) b.hitCooldowns.delete(id); else b.hitCooldowns.set(id, next); }
+    }
+    let target = b.targetId !== null ? enemies.find(e => e.id === b.targetId) : null;
+    if (!target) target = nearestEnemyTo(b.x, b.y);
+    if (target) {
+      b.targetId = target.id;
+      const a = Math.atan2(target.y-b.y, target.x-b.x); b.vx = Math.cos(a); b.vy = Math.sin(a);
+      b.x += b.vx * b.speed * deltaTime; b.y += b.vy * b.speed * deltaTime;
+    } else if (!b.persistent) {
+      b.x += (b.vx || 1) * b.speed * deltaTime; b.y += (b.vy || 0) * b.speed * deltaTime;
+    }
+    b.life -= deltaTime;
+    let hit = false;
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const enemy = enemies[j];
+      if (Math.hypot(b.x-enemy.x,b.y-enemy.y) <= b.radius+enemy.radius) {
+        if (b.splashRadius) {
+          hunterExplosions.push({ x:b.x, y:b.y, radius:b.splashRadius, life:0.32, maxLife:0.32 });
+          for (let k = enemies.length - 1; k >= 0; k--) {
+            const victim = enemies[k];
+            if (Math.hypot(victim.x-b.x,victim.y-b.y) <= b.splashRadius + victim.radius) {
+              victim.health -= b.damage; spawnParticles(victim.x,victim.y,8,b.color,190,0.4,4);
+              if (victim.health <= 0) { const isB=victim.isBoss; enemies.splice(k,1); onEnemyKilled({isBoss:isB}); }
+            }
+          }
+          hit = true; break;
+        } else if (b.persistent) {
+          if (!b.hitCooldowns.has(enemy.id)) {
+            enemy.health -= b.damage; b.totalDamage += b.damage; b.hitCooldowns.set(enemy.id, 0.18);
+            spawnParticles(enemy.x,enemy.y,6,b.color,160,0.35,3);
+            if (enemy.health <= 0) { const isB=enemy.isBoss; enemies.splice(j,1); onEnemyKilled({isBoss:isB}); b.targetId = null; }
+          }
+        } else {
+          enemy.health -= b.damage; spawnParticles(enemy.x,enemy.y,6,b.color,160,0.35,3);
+          if (enemy.health <= 0) { const isB=enemy.isBoss; enemies.splice(j,1); onEnemyKilled({isBoss:isB}); }
+          hit = true; break;
+        }
+      }
+    }
+    if (b.life <= 0 || (!b.persistent && (hit || b.x < -80 || b.x > canvas.width+80 || b.y < -80 || b.y > canvas.height+80))) hunterBullets.splice(i,1);
+  }
+
+  for (let i = enemyBullets.length - 1; i >= 0; i--) {
+    const b = enemyBullets[i];
+    b.x += b.vx * deltaTime; b.y += b.vy * deltaTime;
+    if (b.x < -50 || b.x > canvas.width + 50 || b.y < -50 || b.y > canvas.height + 50) { enemyBullets.splice(i, 1); continue; }
+    if (!lavaBallInvulnerable && Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
+      health -= b.damage;
+      spawnParticles(b.x, b.y, 8, "#cc44ff", 150, 0.35, 3);
+      enemyBullets.splice(i, 1);
+      if (health <= 0) { startCutscene("death", 2.0, {}); return; }
+    }
+  }
+
+  for (let i = smokeBombs.length - 1; i >= 0; i--) {
+    const b = smokeBombs[i];
+    b.duration -= deltaTime;
+    b.damageTickTimer -= deltaTime;
+    if (b.damageTickTimer <= 0) {
+      b.damageTickTimer = 0.4;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        if (Math.hypot(b.x - enemy.x, b.y - enemy.y) <= b.radius + enemy.radius) {
+          enemy.health -= 20;
+          if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        }
+      }
+    }
+    if (b.duration <= 0) smokeBombs.splice(i, 1);
+  }
+
+  for (let i = fireOrbs.length - 1; i >= 0; i--) {
+    const orb = fireOrbs[i];
+    orb.x += orb.vx * deltaTime; orb.y += orb.vy * deltaTime;
+    orb.duration -= deltaTime;
+    orb.spinAngle += deltaTime * 5;
+    if (Math.random() < 0.7) spawnParticles(orb.x, orb.y, 1, "#ffaa33", 40, 0.5, 3);
+    for (let j = enemies.length - 1; j >= 0; j--) {
+      const enemy = enemies[j];
+      if (orb.hitIds.has(enemy.id)) continue;
+      const dist = Math.hypot(orb.x - enemy.x, orb.y - enemy.y);
+      if (dist <= orb.radius + enemy.radius) {
+        const dmg = Math.min(orb.damage, orb.maxDamage - orb.damageDealt);
+        if (dmg <= 0) break;
+        enemy.health -= dmg;
+        orb.damageDealt += dmg;
+        orb.hitIds.add(enemy.id);
+        spawnParticles(enemy.x, enemy.y, 8, "#ffcc44", 180, 0.4, 3);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(j, 1); onEnemyKilled({ isBoss: isB }); }
+        if (orb.damageDealt >= orb.maxDamage) break;
+      }
+    }
+    if (orb.damageDealt >= orb.maxDamage || orb.duration <= 0) fireOrbs.splice(i, 1);
+  }
+
+  enemySpawnTimer += deltaTime;
+  if (enemySpawnTimer >= enemySpawnInterval) { spawnEnemy(); enemySpawnTimer = 0; }
+
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const enemy = enemies[i];
+    if (enemy.freezeTimer > 0) { enemy.freezeTimer = Math.max(0, enemy.freezeTimer - deltaTime); enemy.speed = enemy.baseSpeed * 0.4; }
+    else enemy.speed = enemy.baseSpeed;
+
+    if (enemy.isRusher) {
+      enemy.dashTimer -= deltaTime;
+      if (enemy.dashTimer <= 0 && !enemy.dashing) { enemy.dashing = true; enemy.dashDuration = 0.7; enemy.dashTimer = 3.0; }
+      if (enemy.dashing) { enemy.dashDuration -= deltaTime; if (enemy.dashDuration <= 0) enemy.dashing = false; }
+    }
+
+    const dx = player.x - enemy.x;
+    const dy = player.y - enemy.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const curSpeed = enemy.dashing ? enemy.speed * 2.6 : enemy.speed;
+    const suctionBoost = nicksonSuctionTimer > 0 ? 300 : 0;
+    if (dist > 0) {
+      enemy.x += (dx / dist) * (curSpeed + suctionBoost) * deltaTime;
+      enemy.y += (dy / dist) * (curSpeed + suctionBoost) * deltaTime;
+    }
+    if (enemy.dashing) spawnParticles(enemy.x, enemy.y, 1, "#ff88ff", 30, 0.3, 3);
+    if (enemy.isBoss) {
+      enemy.shootTimer -= deltaTime;
+      if (enemy.shootTimer <= 0) {
+        enemy.shootTimer = 1.8;
+        const a = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+        for (let s = -1; s <= 1; s++) {
+          const spread = a + s * 0.25;
+          enemyBullets.push({ x: enemy.x, y: enemy.y, vx: Math.cos(spread) * 220, vy: Math.sin(spread) * 220, radius: 10, damage: 30, color: "#cc44ff" });
+        }
+      }
+    }
+    if (equippedElement === "sand" && auraActiveTimer > 0 && applyAuraDamage) {
+      if (dist <= 120 + enemy.radius) {
+        enemy.health -= 25;
+        spawnParticles(enemy.x, enemy.y, 4, "#ffd166", 100, 0.4, 3);
+        if (enemy.health <= 0) { const isB = enemy.isBoss; enemies.splice(i, 1); onEnemyKilled({ isBoss: isB }); continue; }
+      }
+    }
+    if (enemy.hitCooldown > 0) enemy.hitCooldown -= deltaTime;
+    if (!lavaBallInvulnerable && dist < player.radius + enemy.radius) {
+      if (enemy.hitCooldown <= 0) {
+        health -= enemy.damage;
+        enemy.hitCooldown = 0.5;
+        spawnParticles(player.x, player.y, 6, "#ff5555", 150, 0.35, 3);
+        if (health <= 0) { startCutscene("death", 2.0, {}); return; }
+      }
+    }
+  }
+}
+
+// ---- DRAW ----
+
+function drawBackground() {
+  if (isRaidMode) {
+    const W = canvas.width, H = canvas.height;
+    const base = ctx.createLinearGradient(0, 0, W, H);
+    base.addColorStop(0, "#17152d"); base.addColorStop(.48, "#292044"); base.addColorStop(1, "#0d172b");
+    ctx.fillStyle = base; ctx.fillRect(0, 0, W, H);
+    // Deep violet / indigo molten ground: deliberately different from Lava orange and Volcano red.
+    for (let i = 0; i < 7; i++) {
+      const x = W * (i / 6) + Math.sin(bgTime * .28 + i * 1.7) * 35;
+      ctx.strokeStyle = i % 2 ? "rgba(116,105,205,.30)" : "rgba(77,151,190,.24)";
+      ctx.lineWidth = 2 + (i % 3);
+      ctx.beginPath(); ctx.moveTo(x, 0);
+      let y = 0;
+      while (y < H) { y += 34 + ((i * 11 + Math.floor(y)) % 25); ctx.lineTo(x + Math.sin(y * .023 + i + bgTime * .3) * 22, Math.min(y, H)); }
+      ctx.stroke();
+    }
+    for (let i = 0; i < 9; i++) {
+      const x = ((i * 137 + bgTime * (9 + i % 3)) % (W + 80)) - 40;
+      const y = ((i * 83 + Math.sin(bgTime * .2 + i) * 30) % (H + 80)) - 40;
+      const glow = ctx.createRadialGradient(x, y, 0, x, y, 90 + (i % 3) * 25);
+      glow.addColorStop(0, "rgba(103,105,206,.13)"); glow.addColorStop(1, "rgba(103,105,206,0)");
+      ctx.fillStyle = glow; ctx.fillRect(x - 120, y - 120, 240, 240);
+    }
+    // Fortress silhouette around the map perimeter: thick stone ramparts and corner towers.
+    const inset = 15, wall = 23, tower = 42;
+    ctx.save();
+    ctx.shadowColor = "rgba(105,147,197,.45)"; ctx.shadowBlur = 12;
+    ctx.fillStyle = "#222b42"; ctx.strokeStyle = "#7c91b3"; ctx.lineWidth = 3;
+    ctx.fillRect(inset, inset, W - inset * 2, wall); ctx.strokeRect(inset, inset, W - inset * 2, wall);
+    ctx.fillRect(inset, H - inset - wall, W - inset * 2, wall); ctx.strokeRect(inset, H - inset - wall, W - inset * 2, wall);
+    ctx.fillRect(inset, inset, wall, H - inset * 2); ctx.strokeRect(inset, inset, wall, H - inset * 2);
+    ctx.fillRect(W - inset - wall, inset, wall, H - inset * 2); ctx.strokeRect(W - inset - wall, inset, wall, H - inset * 2);
+    ctx.fillStyle = "#35425e"; ctx.strokeStyle = "#a6b4cf";
+    const towers = [[inset, inset], [W - inset - tower, inset], [inset, H - inset - tower], [W - inset - tower, H - inset - tower]];
+    for (const t of towers) { ctx.fillRect(t[0], t[1], tower, tower); ctx.strokeRect(t[0], t[1], tower, tower); }
+    // Crenellations along each wall make the border read as a fortress rather than a plain frame.
+    ctx.fillStyle = "#53627e";
+    for (let x = inset + tower; x < W - inset - tower; x += 36) {
+      ctx.fillRect(x, inset - 3, 18, 8); ctx.fillRect(x, H - inset - wall - 5, 18, 8);
+    }
+    for (let y = inset + tower; y < H - inset - tower; y += 36) {
+      ctx.fillRect(inset - 3, y, 8, 18); ctx.fillRect(W - inset - wall - 5, y, 8, 18);
+    }
+    ctx.restore();
+    return;
+  }
+  const g = ctx.createRadialGradient(canvas.width * 0.5, canvas.height * 0.5, 0, canvas.width * 0.5, canvas.height * 0.5, Math.max(canvas.width, canvas.height) * 0.8);
+  g.addColorStop(0, "#0b0a1f"); g.addColorStop(0.5, "#050414"); g.addColorStop(1, "#000000");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const t = bgTime * 0.15;
+  for (let n = 0; n < 3; n++) {
+    const px = canvas.width * (0.5 + 0.35 * Math.cos(t + n * 2.1));
+    const py = canvas.height * (0.5 + 0.35 * Math.sin(t * 1.2 + n * 1.7));
+    const radius = Math.max(canvas.width, canvas.height) * 0.45;
+    const ng = ctx.createRadialGradient(px, py, 0, px, py, radius);
+    if (n === 0) { ng.addColorStop(0, "rgba(120, 60, 200, 0.10)"); ng.addColorStop(1, "rgba(120, 60, 200, 0)"); }
+    else if (n === 1) { ng.addColorStop(0, "rgba(60, 120, 200, 0.08)"); ng.addColorStop(1, "rgba(60, 120, 200, 0)"); }
+    else { ng.addColorStop(0, "rgba(200, 40, 120, 0.06)"); ng.addColorStop(1, "rgba(200, 40, 120, 0)"); }
+    ctx.fillStyle = ng; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.strokeStyle = "rgba(90, 70, 140, 0.10)"; ctx.lineWidth = 1;
+  const gs = 60;
+  const ox = (bgTime * 8) % gs, oy = (bgTime * 8) % gs;
+  for (let x = -ox; x < canvas.width; x += gs) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+  for (let y = -oy; y < canvas.height; y += gs) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+  for (const s of starfield) {
+    const tw = 0.5 + 0.5 * Math.sin(bgTime * 2 + s.tw);
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(200, 190, 255, " + (s.a * tw).toFixed(3) + ")"; ctx.fill();
+  }
+  const vg = ctx.createRadialGradient(canvas.width / 2, canvas.height / 2, Math.min(canvas.width, canvas.height) * 0.35, canvas.width / 2, canvas.height / 2, Math.max(canvas.width, canvas.height) * 0.75);
+  vg.addColorStop(0, "rgba(0,0,0,0)"); vg.addColorStop(1, "rgba(0,0,0,0.75)");
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function drawEnemy(enemy) {
+  const now = performance.now() / 1000;
+  const pulse = 0.5 + 0.5 * Math.sin(now * 3 + (enemy.pulsePhase || 0));
+  const frozen = enemy.freezeTimer > 0;
+  let baseColor, glowColor;
+  if (frozen) { baseColor = "#9fe4ff"; glowColor = "rgba(120, 220, 255, 0.85)"; }
+  else if (enemy.isBoss) { baseColor = "#c060ff"; glowColor = "rgba(180, 80, 255, 0.9)"; }
+  else if (enemy.isTank) { baseColor = "#3ea663"; glowColor = "rgba(80, 220, 130, 0.85)"; }
+  else if (enemy.isRusher) { baseColor = "#dd44dd"; glowColor = "rgba(255, 100, 255, 0.9)"; }
+  else if (enemy.type === "fast") { baseColor = "#ffaa33"; glowColor = "rgba(255, 170, 40, 0.85)"; }
+  else { baseColor = "#ff4455"; glowColor = "rgba(255, 60, 80, 0.85)"; }
+  const glowR = enemy.radius * (enemy.dashing ? 3.0 : 2.2);
+  const og = ctx.createRadialGradient(enemy.x, enemy.y, enemy.radius * 0.5, enemy.x, enemy.y, glowR);
+  og.addColorStop(0, glowColor); og.addColorStop(0.5, glowColor.replace(/[\d.]+\)$/, "0.25)")); og.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = og; ctx.beginPath(); ctx.arc(enemy.x, enemy.y, glowR, 0, Math.PI * 2); ctx.fill();
+  const bg = ctx.createRadialGradient(enemy.x - enemy.radius * 0.3, enemy.y - enemy.radius * 0.3, enemy.radius * 0.1, enemy.x, enemy.y, enemy.radius);
+  bg.addColorStop(0, "#ffffff"); bg.addColorStop(0.35, baseColor); bg.addColorStop(1, "#330000");
+  ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = glowColor; ctx.lineWidth = enemy.isBoss ? 4 : (enemy.isTank ? 3.5 : (enemy.dashing ? 3 : 2));
+  ctx.beginPath(); ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(enemy.x, enemy.y, enemy.radius * (0.35 + pulse * 0.15), 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255, 255, 255, " + (0.55 + pulse * 0.3).toFixed(2) + ")"; ctx.fill();
+  if (enemy.isBoss) {
+    ctx.strokeStyle = "#ffdd00"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(enemy.x, enemy.y, enemy.radius + 8, 0, Math.PI * 2); ctx.stroke();
+    const ang = now * 1.5;
+    for (let k = 0; k < 6; k++) {
+      const a = ang + k * Math.PI / 3;
+      ctx.beginPath(); ctx.arc(enemy.x + Math.cos(a) * (enemy.radius + 8), enemy.y + Math.sin(a) * (enemy.radius + 8), 3, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffdd00"; ctx.fill();
+    }
+  }
+  if (enemy.isTank) {
+    ctx.strokeStyle = "rgba(160, 220, 180, 0.9)"; ctx.lineWidth = 3;
+    const seg = 6; const ang = now * 0.6;
+    for (let k = 0; k < seg; k++) {
+      const a0 = ang + (k / seg) * Math.PI * 2;
+      ctx.beginPath(); ctx.arc(enemy.x, enemy.y, enemy.radius + 4, a0, a0 + (Math.PI * 2 / seg) * 0.5); ctx.stroke();
+    }
+  }
+  if (enemy.isRusher) {
+    ctx.fillStyle = "rgba(255, 150, 255, 0.85)";
+    const ang = now * 3;
+    for (let k = 0; k < 5; k++) {
+      const a = ang + k * Math.PI * 2 / 5;
+      const px = enemy.x + Math.cos(a) * (enemy.radius + 3);
+      const py = enemy.y + Math.sin(a) * (enemy.radius + 3);
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + Math.cos(a + 0.4) * 5, py + Math.sin(a + 0.4) * 5);
+      ctx.lineTo(px + Math.cos(a - 0.4) * 5, py + Math.sin(a - 0.4) * 5);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  if (enemy.type === "fast" && !frozen) {
+    ctx.strokeStyle = "rgba(255, 170, 40, 0.55)"; ctx.lineWidth = 2;
+    const ang = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+    for (let k = 0; k < 3; k++) {
+      const off = (k - 1) * 4;
+      const sx = enemy.x + Math.cos(ang + Math.PI / 2) * off;
+      const sy = enemy.y + Math.sin(ang + Math.PI / 2) * off;
+      ctx.beginPath(); ctx.moveTo(sx, sy);
+      ctx.lineTo(sx - Math.cos(ang) * (12 + pulse * 4), sy - Math.sin(ang) * (12 + pulse * 4)); ctx.stroke();
+    }
+  }
+  if (frozen) {
+    ctx.fillStyle = "rgba(220, 245, 255, 0.95)";
+    for (let k = 0; k < 4; k++) {
+      const a = now * 2 + k * Math.PI / 2;
+      ctx.beginPath(); ctx.arc(enemy.x + Math.cos(a) * (enemy.radius + 6), enemy.y + Math.sin(a) * (enemy.radius + 6), 1.6, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  if (enemy.health < enemy.maxHealth) {
+    const barW = enemy.isBoss ? 70 : (enemy.isTank ? 40 : (enemy.isRusher ? 32 : 26));
+    const barH = enemy.isBoss ? 7 : (enemy.isTank ? 5 : 4);
+    const bx = enemy.x - barW / 2;
+    const by = enemy.y - enemy.radius - 12;
+    ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(bx - 1, by - 1, barW + 2, barH + 2);
+    ctx.fillStyle = "#222"; ctx.fillRect(bx, by, barW, barH);
+    let hpColor = "#ff3333";
+    if (enemy.isBoss) hpColor = "#cc44ff";
+    else if (enemy.isTank) hpColor = "#3ea663";
+    else if (enemy.isRusher) hpColor = "#dd44dd";
+    ctx.fillStyle = hpColor;
+    ctx.fillRect(bx, by, (enemy.health / enemy.maxHealth) * barW, barH);
+  }
+}
+
+function drawHome() {
+  drawBackground();
+  homeT += 0.016;
+  if (homeBalls.length === 0) {
+    const colors = ["#cca700", "#778899", "#ff4500", "#7ec8ff", "#aaaaaa", "#ff2288", "#4ec44e", "#c060ff", "#a0b0c0", "#d870ff"];
+    const keys = ["sand", "smoke", "flame", "blizzard", "bomb", "buh", "grass", "lightning", "mechanic", "kai"];
+    for (let i = 0; i < 10; i++) {
+      homeBalls.push({ key: keys[i], color: colors[i], x: Math.random() * canvas.width, y: Math.random() * canvas.height, vx: (Math.random() - 0.5) * 60, vy: (Math.random() - 0.5) * 60, r: 20, cd: 0 });
+    }
+  }
+  for (const b of homeBalls) {
+    b.x += b.vx * 0.016; b.y += b.vy * 0.016;
+    if (b.x < b.r + 20) { b.x = b.r + 20; b.vx *= -1; }
+    if (b.x > canvas.width - b.r - 20) { b.x = canvas.width - b.r - 20; b.vx *= -1; }
+    if (b.y < b.r + 20) { b.y = b.r + 20; b.vy *= -1; }
+    if (b.y > canvas.height - b.r - 20) { b.y = canvas.height - b.r - 20; b.vy *= -1; }
+    b.cd -= 0.016;
+    if (b.cd <= 0) {
+      b.cd = 0.6 + Math.random() * 0.6;
+      const ang = Math.random() * Math.PI * 2;
+      if (b.key === "sand") homeFx.push({ type: "beam", x: b.x, y: b.y, tx: b.x + Math.cos(ang) * 200, ty: b.y + Math.sin(ang) * 200, life: 0.3, maxLife: 0.3 });
+      else if (b.key === "smoke") for (let i = 0; i < 4; i++) homeFx.push({ type: "smoke", x: b.x, y: b.y, vx: (Math.random() - 0.5) * 40, vy: (Math.random() - 0.5) * 40, life: 0.8, maxLife: 0.8, r: 20 + Math.random() * 20 });
+      else if (b.key === "flame") homeFx.push({ type: "spin", x: b.x, y: b.y, life: 1.2, maxLife: 1.2, angle: Math.random() * Math.PI * 2 });
+      else if (b.key === "blizzard") homeFx.push({ type: "ice", x: b.x, y: b.y, life: 0.8, maxLife: 0.8 });
+      else if (b.key === "bomb") {
+        homeFx.push({ type: "boom", x: b.x, y: b.y, life: 0.5, maxLife: 0.5, r: 70 });
+        for (let i = 0; i < 8; i++) { const sa = Math.random() * Math.PI * 2; homeFx.push({ type: "spark", x: b.x, y: b.y, vx: Math.cos(sa) * 150, vy: Math.sin(sa) * 150, life: 0.5, maxLife: 0.5, color: "#ffcc44" }); }
+      } else if (b.key === "buh") {
+        for (let i = 0; i < 7; i++) { const sa = (Math.PI * 2 / 7) * i; homeFx.push({ type: "buh", x: b.x, y: b.y, vx: Math.cos(sa) * 220, vy: Math.sin(sa) * 220, life: 1.5, maxLife: 1.5 }); }
+      } else if (b.key === "grass") {
+        for (let i = 0; i < 3; i++) { const sa = ang + (i - 1) * 0.2; homeFx.push({ type: "grass", x: b.x, y: b.y, vx: Math.cos(sa) * 260, vy: Math.sin(sa) * 260, life: 1.2, maxLife: 1.2 }); }
+      } else if (b.key === "lightning") {
+        homeFx.push({ type: "bolt", x: b.x, y: b.y, tx: b.x + Math.cos(ang) * 250, ty: b.y + Math.sin(ang) * 250, life: 0.5, maxLife: 0.5 });
+      } else if (b.key === "mechanic") {
+        for (let i = 0; i < 6; i++) { const sa = ang + (i - 2.5) * 0.16; homeFx.push({ type: "claw", x: b.x, y: b.y, vx: Math.cos(sa) * 300, vy: Math.sin(sa) * 300, angle: sa, life: 1.0, maxLife: 1.0 }); }
+      } else if (b.key === "kai") {
+        for (let i = 0; i < 5; i++) { const sa = (Math.PI * 2 / 5) * i; homeFx.push({ type: "kai", x: b.x, y: b.y, vx: Math.cos(sa) * 240, vy: Math.sin(sa) * 240, life: 1.2, maxLife: 1.2 }); }
+      }
+    }
+  }
+  for (let i = homeFx.length - 1; i >= 0; i--) {
+    const f = homeFx[i];
+    f.life -= 0.016;
+    if (f.type === "smoke" || f.type === "spark" || f.type === "buh" || f.type === "grass" || f.type === "claw" || f.type === "kai") {
+      f.x += f.vx * 0.016; f.y += f.vy * 0.016;
+      f.vx *= 0.96; f.vy *= 0.96;
+    }
+    if (f.type === "spin") f.angle += 0.016 * 12;
+    if (f.life <= 0) homeFx.splice(i, 1);
+  }
+  for (const f of homeFx) {
+    const a = f.life / f.maxLife;
+    ctx.save(); ctx.globalAlpha = a;
+    if (f.type === "beam") {
+      const g = ctx.createLinearGradient(f.x, f.y, f.tx, f.ty);
+      g.addColorStop(0, "#ffe066"); g.addColorStop(1, "rgba(255, 230, 130, 0)");
+      ctx.strokeStyle = g; ctx.lineWidth = 8;
+      ctx.beginPath(); ctx.moveTo(f.x, f.y); ctx.lineTo(f.tx, f.ty); ctx.stroke();
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.stroke();
+    } else if (f.type === "smoke") {
+      const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.r);
+      g.addColorStop(0, "rgba(200, 200, 200, 0.5)"); g.addColorStop(1, "rgba(120, 120, 120, 0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill();
+    } else if (f.type === "spin") {
+      const len = 120;
+      const l1x = f.x + Math.cos(f.angle) * len, l1y = f.y + Math.sin(f.angle) * len;
+      const l2x = f.x + Math.cos(f.angle + Math.PI) * len, l2y = f.y + Math.sin(f.angle + Math.PI) * len;
+      ctx.strokeStyle = "rgba(255, 69, 0, 0.9)"; ctx.lineWidth = 18;
+      ctx.beginPath(); ctx.moveTo(f.x, f.y); ctx.lineTo(l1x, l1y); ctx.lineTo(l2x, l2y); ctx.stroke();
+      ctx.strokeStyle = "#ffff00"; ctx.lineWidth = 6; ctx.stroke();
+    } else if (f.type === "ice") {
+      ctx.strokeStyle = "rgba(120, 200, 255, 0.9)"; ctx.lineWidth = 14;
+      ctx.beginPath();
+      ctx.moveTo(f.x - 150, f.y); ctx.lineTo(f.x + 150, f.y);
+      ctx.moveTo(f.x, f.y - 150); ctx.lineTo(f.x, f.y + 150); ctx.stroke();
+    } else if (f.type === "boom") {
+      const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.r);
+      g.addColorStop(0, "rgba(255, 240, 150, 0.95)");
+      g.addColorStop(0.5, "rgba(255, 140, 0, 0.7)");
+      g.addColorStop(1, "rgba(255, 60, 0, 0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill();
+    } else if (f.type === "spark") {
+      ctx.fillStyle = f.color; ctx.beginPath(); ctx.arc(f.x, f.y, 3, 0, Math.PI * 2); ctx.fill();
+    } else if (f.type === "buh") {
+      const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 16);
+      g.addColorStop(0, "#ffffff"); g.addColorStop(0.5, "#ff2288"); g.addColorStop(1, "rgba(120, 0, 40, 0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, 16, 0, Math.PI * 2); ctx.fill();
+    } else if (f.type === "grass") {
+      const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 12);
+      g.addColorStop(0, "#d0ffb0"); g.addColorStop(0.5, "#4ec44e"); g.addColorStop(1, "rgba(30, 100, 30, 0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, 12, 0, Math.PI * 2); ctx.fill();
+    } else if (f.type === "bolt") {
+      ctx.save();
+      ctx.shadowColor = "#c060ff"; ctx.shadowBlur = 25;
+      ctx.strokeStyle = "rgba(180, 100, 255, 0.95)"; ctx.lineWidth = 6;
+      ctx.beginPath();
+      const steps = 8;
+      const dx = (f.tx - f.x) / steps, dy = (f.ty - f.y) / steps;
+      ctx.moveTo(f.x, f.y);
+      for (let k = 1; k < steps; k++) {
+        ctx.lineTo(f.x + dx * k + (Math.random() - 0.5) * 24, f.y + dy * k + (Math.random() - 0.5) * 24);
+      }
+      ctx.lineTo(f.tx, f.ty); ctx.stroke();
+      ctx.strokeStyle = "#e0ccff"; ctx.lineWidth = 2; ctx.stroke();
+      ctx.restore();
+    } else if (f.type === "claw") {
+      ctx.save();
+      ctx.translate(f.x, f.y); ctx.rotate(f.angle);
+      ctx.shadowColor = "#c0c8d0"; ctx.shadowBlur = 15;
+      ctx.fillStyle = "rgba(150, 160, 180, 0.9)";
+      ctx.fillRect(-5, -12, 24, 24);
+      ctx.strokeStyle = "#e0e8f0"; ctx.lineWidth = 2;
+      ctx.strokeRect(-5, -12, 24, 24);
+      ctx.beginPath();
+      ctx.moveTo(19, -12); ctx.lineTo(30, -6); ctx.lineTo(19, 0);
+      ctx.moveTo(19, 12); ctx.lineTo(30, 6); ctx.lineTo(19, 0);
+      ctx.stroke();
+      ctx.restore();
+    } else if (f.type === "kai") {
+      const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 18);
+      g.addColorStop(0, "#f0e0ff"); g.addColorStop(0.5, "#d870ff"); g.addColorStop(1, "rgba(100, 0, 150, 0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, 18, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+  for (const b of homeBalls) {
+    const glow = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r * 2.6);
+    glow.addColorStop(0, b.color); glow.addColorStop(0.5, b.color + "55"); glow.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 2.6, 0, Math.PI * 2); ctx.fill();
+    const bg = ctx.createRadialGradient(b.x - b.r * 0.3, b.y - b.r * 0.3, b.r * 0.1, b.x, b.y, b.r);
+    bg.addColorStop(0, "#ffffff"); bg.addColorStop(0.4, b.color); bg.addColorStop(1, b.color);
+    ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = 2; ctx.stroke();
+  if (equippedElement === "hunter") { const t=nearestEnemyTo(player.x,player.y); const a=t?Math.atan2(t.y-player.y,t.x-player.x):0; ctx.save(); ctx.translate(player.x,player.y); ctx.rotate(a); ctx.fillStyle="#49301d"; ctx.fillRect(8,-7,29,14); ctx.fillStyle="#c18a50"; ctx.fillRect(27,-5,13,10); ctx.restore(); }
+  }
+  const titleY = canvas.height / 2 - 80;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.save();
+  ctx.shadowColor = "#9b30ff"; ctx.shadowBlur = 40;
+  ctx.fillStyle = "#ffffff"; ctx.font = "bold 84px Arial";
+  ctx.fillText("PURPLE CIRCLE", canvas.width / 2, titleY);
+  ctx.restore();
+  ctx.save();
+  ctx.shadowColor = "#ff2288"; ctx.shadowBlur = 20;
+  ctx.fillStyle = "#ffccff"; ctx.font = "bold 26px Arial";
+  ctx.fillText("survive the waves  ·  roll the gacha  ·  become legend", canvas.width / 2, titleY + 62);
+  ctx.restore();
+
+  const btnW = 260, btnH = 76;
+  const btnX = canvas.width / 2 - btnW / 2;
+  const btnY = canvas.height / 2 + 40;
+  const hover = mouse.x >= btnX && mouse.x <= btnX + btnW && mouse.y >= btnY && mouse.y <= btnY + btnH;
+  const pulse = 0.5 + 0.5 * Math.sin(homeT * 3);
+  ctx.save();
+  ctx.shadowColor = "#9b30ff"; ctx.shadowBlur = hover ? 50 : 25 + pulse * 15;
+  const bg2 = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
+  bg2.addColorStop(0, hover ? "#b060ff" : "#9b30ff");
+  bg2.addColorStop(1, hover ? "#6a10d0" : "#5a10a0");
+  ctx.fillStyle = bg2;
+  ctx.beginPath();
+  const r = 18;
+  ctx.moveTo(btnX + r, btnY);
+  ctx.lineTo(btnX + btnW - r, btnY);
+  ctx.quadraticCurveTo(btnX + btnW, btnY, btnX + btnW, btnY + r);
+  ctx.lineTo(btnX + btnW, btnY + btnH - r);
+  ctx.quadraticCurveTo(btnX + btnW, btnY + btnH, btnX + btnW - r, btnY + btnH);
+  ctx.lineTo(btnX + r, btnY + btnH);
+  ctx.quadraticCurveTo(btnX, btnY + btnH, btnX, btnY + btnH - r);
+  ctx.lineTo(btnX, btnY + r);
+  ctx.quadraticCurveTo(btnX, btnY, btnX + r, btnY);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(btnX + r, btnY);
+  ctx.lineTo(btnX + btnW - r, btnY);
+  ctx.quadraticCurveTo(btnX + btnW, btnY, btnX + btnW, btnY + r);
+  ctx.lineTo(btnX + btnW, btnY + btnH - r);
+  ctx.quadraticCurveTo(btnX + btnW, btnY + btnH, btnX + btnW - r, btnY + btnH);
+  ctx.lineTo(btnX + r, btnY + btnH);
+  ctx.quadraticCurveTo(btnX, btnY + btnH, btnX, btnY + btnH - r);
+  ctx.lineTo(btnX, btnY + r);
+  ctx.quadraticCurveTo(btnX, btnY, btnX + r, btnY);
+  ctx.closePath(); ctx.stroke();
+  ctx.fillStyle = "#ffffff"; ctx.font = "bold 36px Arial";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("PLAY", canvas.width / 2, btnY + btnH / 2 + 2);
+
+  // Raid button directly underneath Play.
+  const raidY = btnY + btnH + 12, raidH = 58;
+  const raidHover = mouse.x >= btnX && mouse.x <= btnX + btnW && mouse.y >= raidY && mouse.y <= raidY + raidH;
+  ctx.save();
+  ctx.shadowColor = "#00d9ff"; ctx.shadowBlur = raidHover ? 32 : 16;
+  const raidGrad = ctx.createLinearGradient(btnX, raidY, btnX, raidY + raidH);
+  raidGrad.addColorStop(0, raidHover ? "#26dfff" : "#087fa8");
+  raidGrad.addColorStop(1, raidHover ? "#087fa8" : "#064363");
+  ctx.fillStyle = raidGrad;
+  ctx.beginPath(); ctx.roundRect(btnX, raidY, btnW, raidH, 14); ctx.fill();
+  ctx.strokeStyle = "#bdf7ff"; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = "#ffffff"; ctx.font = "bold 27px Arial";
+  ctx.fillText("RAIDS", canvas.width / 2, raidY + raidH / 2);
+  ctx.restore();
+}
+
+function draw() {
+  let shakeX = 0, shakeY = 0;
+  if (screenShake > 0) { shakeX = (Math.random() - 0.5) * screenShake * 20; shakeY = (Math.random() - 0.5) * screenShake * 20; }
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  drawBackground();
+  if (isRaidMode) {
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 45, 70, 0.82)"; ctx.strokeStyle = "#35ddff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(16, 16, 210, 38, 10); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#d8faff"; ctx.font = "bold 17px Arial"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText("RAID MODE · 10× ENEMY HP", 27, 35);
+    ctx.fillStyle = "#ffe88a"; ctx.font = "bold 15px Arial";
+    ctx.fillText("RAID COINS: " + raidCoins, 27, 73);
+    ctx.restore();
+  }
+
+  // Smoke bombs
+  for (const b of smokeBombs) {
+    if (b.puffs) for (const p of b.puffs) {
+      p.life -= 0.016;
+      if (p.life <= 0) { p.life = 1 + Math.random() * 1.0; p.a = Math.random() * Math.PI * 2; p.d = Math.random() * 20; }
+    }
+    const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.radius);
+    g.addColorStop(0, "rgba(200, 200, 200, 0.55)");
+    g.addColorStop(1, "rgba(120, 120, 120, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill();
+    if (b.puffs) for (const p of b.puffs) {
+      const px = b.x + Math.cos(p.a) * p.d, py = b.y + Math.sin(p.a) * p.d;
+      const pg = ctx.createRadialGradient(px, py, 0, px, py, p.size);
+      pg.addColorStop(0, "rgba(220, 220, 220, 0.55)"); pg.addColorStop(1, "rgba(120, 120, 120, 0)");
+      ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(px, py, p.size, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // Land mines
+  for (const m of landMines) {
+    if (m.exploded) continue;
+    const blink = 0.5 + 0.5 * Math.sin(m.blink || 0);
+    ctx.beginPath(); ctx.arc(m.x, m.y, m.radius + blink * 3, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(60, 60, 60, 0.85)"; ctx.fill();
+    ctx.strokeStyle = "#ffcc00"; ctx.lineWidth = 3; ctx.stroke();
+    ctx.beginPath(); ctx.arc(m.x, m.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255, 60, 60, " + (0.5 + blink * 0.5) + ")"; ctx.fill();
+  }
+
+  // Grass fields
+  for (const f of grassFields) {
+    const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.radius);
+    g.addColorStop(0, "rgba(80, 220, 80, 0.35)");
+    g.addColorStop(0.6, "rgba(50, 160, 50, 0.28)");
+    g.addColorStop(1, "rgba(30, 100, 30, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, f.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(120, 240, 120, 0.75)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.radius, 0, Math.PI * 2); ctx.stroke();
+    for (const b of f.blades) {
+      const bx = f.x + b.ox, by = f.y + b.oy;
+      const sway = Math.sin(b.sway) * 3;
+      ctx.strokeStyle = "rgba(120, 230, 100, 0.85)"; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.quadraticCurveTo(bx + sway, by - b.h * 0.6, bx + sway * 1.4, by - b.h);
+      ctx.stroke();
+    }
+  }
+
+  // KAI FIELDS (gas)
+  for (const f of kaiFields) {
+    const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.radius);
+    g.addColorStop(0, "rgba(216, 112, 255, 0.40)");
+    g.addColorStop(0.5, "rgba(160, 60, 200, 0.30)");
+    g.addColorStop(1, "rgba(80, 20, 120, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(f.x, f.y, f.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(230, 150, 255, 0.85)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.radius, 0, Math.PI * 2); ctx.stroke();
+    // particles
+    for (const p of f.particles) {
+      const px = f.x + Math.cos(p.a) * p.d;
+      const py = f.y + Math.sin(p.a) * p.d;
+      const pa = p.life / 1.2;
+      ctx.globalAlpha = pa * 0.7;
+      const pg = ctx.createRadialGradient(px, py, 0, px, py, 14);
+      pg.addColorStop(0, "rgba(240, 200, 255, 0.9)");
+      pg.addColorStop(1, "rgba(180, 80, 220, 0)");
+      ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(px, py, 14, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Grass shards
+  for (const s of grassShards) {
+    for (let i = 0; i < s.trail.length; i++) {
+      const t = s.trail[i];
+      if (t.life <= 0) continue;
+      ctx.globalAlpha = (t.life / 0.3) * 0.5;
+      ctx.fillStyle = "#4ec44e";
+      ctx.beginPath(); ctx.arc(t.x, t.y, s.radius * (t.life / 0.3) * 0.8, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.save();
+    ctx.translate(s.x, s.y); ctx.rotate(s.rot);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, s.radius * 1.6);
+    g.addColorStop(0, "#e0ffc0"); g.addColorStop(0.5, "#6ee46e"); g.addColorStop(1, "rgba(40, 120, 40, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, s.radius * 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-s.radius * 1.2, 0); ctx.lineTo(s.radius * 1.2, -s.radius * 0.4); ctx.lineTo(s.radius * 1.2, s.radius * 0.4);
+    ctx.closePath();
+    ctx.fillStyle = "#8ef08e"; ctx.fill();
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.restore();
+  }
+
+  // BUH shrine
+  for (const shrine of buhShrines) {
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 100);
+    const g = ctx.createRadialGradient(shrine.x, shrine.y, 0, shrine.x, shrine.y, shrine.radius);
+    g.addColorStop(0, "rgba(255, 0, 80, " + (0.55 + pulse * 0.2) + ")");
+    g.addColorStop(0.6, "rgba(180, 0, 60, 0.35)"); g.addColorStop(1, "rgba(120, 0, 40, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(shrine.x, shrine.y, shrine.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(255, 40, 100, 0.95)"; ctx.lineWidth = 4; ctx.stroke();
+  }
+  for (const fx of shrineSlashFx) {
+    const a = fx.life / fx.maxLife;
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.strokeStyle = "#ff3366"; ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(fx.x - Math.cos(fx.angle) * fx.len, fx.y - Math.sin(fx.angle) * fx.len);
+    ctx.lineTo(fx.x + Math.cos(fx.angle) * fx.len, fx.y + Math.sin(fx.angle) * fx.len);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Blizzard field
+  for (const field of blizzardFields) {
+    const g = ctx.createRadialGradient(field.x, field.y, 0, field.x, field.y, field.radius);
+    g.addColorStop(0, "rgba(200, 240, 255, 0.45)");
+    g.addColorStop(0.6, "rgba(100, 200, 255, 0.30)");
+    g.addColorStop(1, "rgba(60, 120, 200, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(field.x, field.y, field.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(150, 230, 255, 0.9)"; ctx.lineWidth = 4; ctx.stroke();
+  }
+
+  // Ice spikes
+  for (const spike of iceSpikes) {
+    const halfW = spike.w / 2, halfH = spike.h / 2;
+    ctx.fillStyle = "rgba(120, 200, 255, 0.85)";
+    ctx.fillRect(spike.x - halfW, spike.y - halfH / 2, spike.w, spike.h / 2);
+    ctx.fillRect(spike.x - halfH / 2, spike.y - halfW, spike.h / 2, spike.w);
+    ctx.strokeStyle = "rgba(220, 245, 255, 0.95)"; ctx.lineWidth = 4;
+    ctx.strokeRect(spike.x - halfW, spike.y - halfH / 2, spike.w, spike.h / 2);
+    ctx.strokeRect(spike.x - halfH / 2, spike.y - halfW, spike.h / 2, spike.w);
+  }
+
+  // Fire orbs
+  for (const orb of fireOrbs) {
+    ctx.save();
+    ctx.translate(orb.x, orb.y); ctx.rotate(orb.spinAngle);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, orb.radius);
+    g.addColorStop(0, "#ffffaa"); g.addColorStop(0.5, "rgba(255, 100, 0, 0.95)"); g.addColorStop(1, "rgba(255, 60, 0, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, orb.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#ffcc00"; ctx.lineWidth = 6; ctx.stroke();
+    ctx.restore();
+  }
+
+  // BUH bullets
+  for (const b of buhBullets) {
+    if (b.trail) for (let i = 0; i < b.trail.length; i++) {
+      const t = b.trail[i];
+      ctx.globalAlpha = (t.life / 0.35) * 0.5;
+      ctx.fillStyle = "#ff2288";
+      ctx.beginPath(); ctx.arc(t.x, t.y, 10 * (t.life / 0.35), 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.save();
+    ctx.translate(b.x, b.y); ctx.rotate(b.spinAngle);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, b.radius * 1.6);
+    g.addColorStop(0, "#ffffff"); g.addColorStop(0.4, "#ff2288"); g.addColorStop(1, "rgba(120, 0, 40, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, b.radius * 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, b.radius, 0, Math.PI * 2);
+    ctx.strokeStyle = "#ff66aa"; ctx.lineWidth = 3; ctx.stroke();
+    ctx.restore();
+  }
+
+  // KAI ORBS
+  for (const b of kaiOrbs) {
+    if (b.trail) for (let i = 0; i < b.trail.length; i++) {
+      const t = b.trail[i];
+      ctx.globalAlpha = (t.life / 0.3) * 0.5;
+      ctx.fillStyle = "#d870ff";
+      ctx.beginPath(); ctx.arc(t.x, t.y, 8 * (t.life / 0.3), 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.save();
+    ctx.translate(b.x, b.y); ctx.rotate(b.spinAngle);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, b.radius * 1.6);
+    g.addColorStop(0, "#ffffff"); g.addColorStop(0.4, "#d870ff"); g.addColorStop(1, "rgba(100, 0, 150, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, b.radius * 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, b.radius, 0, Math.PI * 2);
+    ctx.strokeStyle = "#e0a0ff"; ctx.lineWidth = 3; ctx.stroke();
+    ctx.strokeStyle = "rgba(255, 220, 255, 0.9)"; ctx.lineWidth = 2;
+    for (let k = 0; k < 3; k++) {
+      const a = k * Math.PI * 2 / 3;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * b.radius * 0.5, Math.sin(a) * b.radius * 0.5);
+      ctx.lineTo(Math.cos(a) * b.radius * 1.3, Math.sin(a) * b.radius * 1.3);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // MECHANIC CLAWS
+  for (const c of mechanicClaws) {
+    if (c.trail) for (let i = 0; i < c.trail.length; i++) {
+      const t = c.trail[i];
+      if (t.life <= 0) continue;
+      ctx.globalAlpha = (t.life / 0.25) * 0.4;
+      ctx.fillStyle = "#a0b0c0";
+      ctx.beginPath(); ctx.arc(t.x, t.y, 14 * (t.life / 0.25), 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.save();
+    ctx.translate(c.x, c.y); ctx.rotate(c.angle);
+    ctx.shadowColor = "#c0c8d0"; ctx.shadowBlur = 20;
+    ctx.fillStyle = "rgba(140, 150, 170, 0.95)";
+    ctx.strokeStyle = "#e0e8f0"; ctx.lineWidth = 2;
+    ctx.fillRect(-16, -12, 30, 24);
+    ctx.strokeRect(-16, -12, 30, 24);
+    ctx.beginPath();
+    ctx.moveTo(14, -12); ctx.lineTo(30, -6); ctx.lineTo(30, -2); ctx.lineTo(14, 0);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(14, 12); ctx.lineTo(30, 6); ctx.lineTo(30, 2); ctx.lineTo(14, 0);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+
+  // MECHANIC SPIN
+  if (mechanicSpinActiveTimer > 0) {
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    const armCount = 4;
+    for (let k = 0; k < armCount; k++) {
+      const a = mechanicSpinAngle + k * Math.PI * 2 / armCount;
+      ctx.save();
+      ctx.rotate(a);
+      ctx.fillStyle = "rgba(140, 150, 170, 0.95)";
+      ctx.strokeStyle = "#e0e8f0"; ctx.lineWidth = 2;
+      ctx.fillRect(player.radius - 4, -8, 100, 16);
+      ctx.strokeRect(player.radius - 4, -8, 100, 16);
+      const tipX = player.radius + 96;
+      ctx.fillStyle = "rgba(180, 190, 210, 0.95)";
+      ctx.beginPath();
+      ctx.moveTo(tipX, -16); ctx.lineTo(tipX + 20, -6); ctx.lineTo(tipX + 20, 6); ctx.lineTo(tipX, 16); ctx.lineTo(tipX - 4, 0);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  // Lightning bolts
+  for (const b of lightningBolts) {
+    if (b.trail) for (let i = 0; i < b.trail.length; i++) {
+      const t = b.trail[i];
+      if (t.life <= 0) continue;
+      ctx.globalAlpha = (t.life / 0.3) * 0.5;
+      ctx.fillStyle = "#c060ff";
+      ctx.beginPath(); ctx.arc(t.x, t.y, 12 * (t.life / 0.3), 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.save();
+    ctx.translate(b.x, b.y); ctx.rotate(b.angle);
+    ctx.shadowColor = "#c060ff"; ctx.shadowBlur = 25;
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, b.radius * 1.6);
+    g.addColorStop(0, "#ffffff"); g.addColorStop(0.4, "#d0a0ff"); g.addColorStop(1, "rgba(100, 0, 200, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, b.radius * 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(200, 150, 255, 0.95)"; ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-b.radius * 1.4, 0);
+    for (let k = 0; k < b.zigzag.length; k++) {
+      const px = -b.radius * 1.4 + ((k + 1) / (b.zigzag.length + 1)) * b.radius * 2.8;
+      ctx.lineTo(px, b.zigzag[k]);
+    }
+    ctx.lineTo(b.radius * 1.4, 0);
+    ctx.stroke();
+    ctx.restore();
+  }
+  for (const s of lightningStrikes) {
+    const a = s.life / s.maxLife;
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.shadowColor = "#c060ff"; ctx.shadowBlur = 30;
+    if (s.isMain) {
+      const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.radius);
+      g.addColorStop(0, "rgba(255, 255, 255, 0.9)");
+      g.addColorStop(0.4, "rgba(180, 100, 255, 0.7)");
+      g.addColorStop(1, "rgba(100, 0, 200, 0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.strokeStyle = "rgba(200, 150, 255, " + a + ")"; ctx.lineWidth = 5;
+      const steps = s.zigzag.length + 2;
+      const dx = (s.x2 - s.x) / steps, dy = (s.y2 - s.y) / steps;
+      ctx.beginPath(); ctx.moveTo(s.x, s.y);
+      for (let k = 0; k < s.zigzag.length; k++) {
+        ctx.lineTo(s.x + dx * (k + 1) + (Math.random() - 0.5) * 12, s.y + dy * (k + 1) + s.zigzag[k]);
+      }
+      ctx.lineTo(s.x2, s.y2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Bomb explosions
+  for (const ex of bombExplosions) {
+    const alpha = ex.life / ex.maxLife;
+    ctx.globalAlpha = alpha;
+    const g = ctx.createRadialGradient(ex.x, ex.y, 0, ex.x, ex.y, ex.radius);
+    g.addColorStop(0, "rgba(255, 240, 150, 0.95)");
+    g.addColorStop(0.5, "rgba(255, 140, 0, 0.8)");
+    g.addColorStop(1, "rgba(255, 60, 0, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ex.x, ex.y, ex.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(255, 200, 0, 0.9)"; ctx.lineWidth = 4; ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // Particles
+  for (const p of particleFx) {
+    const a = p.life / p.maxLife;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.size * a, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Sand aura
+  if (equippedElement === "sand" && auraActiveTimer > 0) {
+    const g = ctx.createRadialGradient(player.x, player.y, 0, player.x, player.y, 120);
+    g.addColorStop(0, "rgba(255, 220, 100, 0.35)"); g.addColorStop(1, "rgba(224, 192, 100, 0.10)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(player.x, player.y, 120, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(240, 200, 50, 0.95)"; ctx.lineWidth = 4; ctx.stroke();
+  }
+
+  // Flame spin
+  if (equippedElement === "flame" && flameSpinActiveTimer > 0) {
+    const beamLen = 140;
+    const l1x = player.x + Math.cos(flameSpinAngle) * beamLen, l1y = player.y + Math.sin(flameSpinAngle) * beamLen;
+    const l2x = player.x + Math.cos(flameSpinAngle + Math.PI) * beamLen, l2y = player.y + Math.sin(flameSpinAngle + Math.PI) * beamLen;
+    ctx.save();
+    ctx.shadowColor = "#ff4500"; ctx.shadowBlur = 25;
+    ctx.strokeStyle = "rgba(255, 69, 0, 0.9)"; ctx.lineWidth = 20;
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(l1x, l1y); ctx.lineTo(l2x, l2y); ctx.stroke();
+    ctx.strokeStyle = "#ffff00"; ctx.lineWidth = 8; ctx.stroke();
+    ctx.restore();
+  }
+
+  // ICEBERG (BLIZZARDV2) visuals: mouse-aimed beam and sweeping ice wall.
+  for (const beam of icebergBeams) {
+    const len = Math.hypot(canvas.width, canvas.height) * 1.5;
+    const ex = player.x + Math.cos(beam.angle) * len, ey = player.y + Math.sin(beam.angle) * len;
+    ctx.save(); ctx.globalAlpha = Math.min(1, beam.duration / 0.35);
+    ctx.shadowColor = "#bff8ff"; ctx.shadowBlur = 30;
+    ctx.strokeStyle = "rgba(160,235,255,0.9)"; ctx.lineWidth = 58;
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 22;
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.strokeStyle = "#d8f7ff"; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(ex, ey); ctx.stroke(); ctx.restore();
+  }
+  for (const wall of icebergWalls) {
+    ctx.save(); ctx.shadowColor = "#d8f7ff"; ctx.shadowBlur = 28;
+    const grad = ctx.createLinearGradient(wall.x - wall.width/2, 0, wall.x + wall.width/2, 0);
+    grad.addColorStop(0, "rgba(100,205,255,0.35)"); grad.addColorStop(0.5, "rgba(225,250,255,0.95)"); grad.addColorStop(1, "rgba(100,205,255,0.35)");
+    ctx.fillStyle = grad; ctx.fillRect(wall.x - wall.width/2, 0, wall.width, canvas.height);
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 5;
+    for (let y = 0; y < canvas.height; y += 95) { ctx.beginPath(); ctx.moveTo(wall.x - wall.width/2, y + 30); ctx.lineTo(wall.x, y); ctx.lineTo(wall.x + wall.width/2, y + 45); ctx.stroke(); }
+    ctx.restore();
+  }
+  for (const b of icebergMinis) {
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.spin); ctx.shadowColor = "#bff8ff"; ctx.shadowBlur = 24;
+    ctx.fillStyle = "#d8f7ff"; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, -b.radius * 1.45); ctx.lineTo(b.radius * 0.8, -2); ctx.lineTo(b.radius * 0.45, b.radius); ctx.lineTo(-b.radius * 0.7, b.radius * 0.65); ctx.lineTo(-b.radius, -b.radius * 0.4); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+  }
+
+  if (carterLightningTimer > 0) {
+    ctx.save(); ctx.fillStyle = "rgba(255,246,106,0.10)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "rgba(255,246,106,0.55)"; ctx.lineWidth = 2;
+    for (let i = 0; i < 22; i++) { const x = (i * 97 + performance.now() * 0.35) % canvas.width; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x - 80, canvas.height); ctx.stroke(); }
+    ctx.restore();
+  }
+  if (carterAuraTimer > 0) {
+    const pulse = 1 + Math.sin(performance.now() / 80) * 0.07;
+    ctx.save(); ctx.fillStyle = "rgba(255,246,106,0.13)"; ctx.strokeStyle = "#fff66a"; ctx.lineWidth = 5; ctx.shadowColor = "#fff66a"; ctx.shadowBlur = 28;
+    ctx.beginPath(); ctx.arc(player.x, player.y, 170 * pulse, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore();
+  }
+
+  if (icebergStormTimer > 0) {
+    ctx.save(); ctx.fillStyle = "rgba(190,235,255,0.14)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "rgba(225,248,255,0.72)"; ctx.lineWidth = 3;
+    for (let i = 0; i < 40; i++) {
+      const x = (i * 83 + performance.now() * 0.55) % (canvas.width + 120) - 60;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x - 120, canvas.height); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Melee slashes
+  for (const slash of meleeSlashes) {
+    const alpha = slash.life / slash.maxLife;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = slash.colorInner; ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.moveTo(slash.x, slash.y);
+    ctx.arc(slash.x, slash.y, slash.reach, slash.angle - slash.arc / 2, slash.angle + slash.arc / 2);
+    ctx.closePath();
+    ctx.fillStyle = slash.color.replace(/[\d.]+\)$/, (alpha * 0.6).toFixed(2) + ")");
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(slash.x, slash.y, slash.reach * 0.85, slash.angle - slash.arc / 2, slash.angle + slash.arc / 2);
+    ctx.strokeStyle = slash.colorInner; ctx.lineWidth = 6; ctx.stroke();
+    ctx.restore();
+  }
+
+  // NICKSON: expanding map-wide shockwave visual.
+  if (nicksonWaveTimer > 0) {
+    ctx.save(); ctx.globalAlpha = Math.min(1, nicksonWaveTimer * 1.8);
+    ctx.strokeStyle = "#66f0ff"; ctx.lineWidth = 9; ctx.shadowColor = "#66f0ff"; ctx.shadowBlur = 24;
+    ctx.beginPath(); ctx.arc(player.x, player.y, nicksonWaveRadius, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+  }
+
+  // Player
+  const plrBase = lavaBallInvulnerable ? "#ff5a18" : (equippedElement === "volcano" ? "#ff3b0b" : (equippedElement === "lava" ? "#ff6a1a" : (equippedElement === "iceberg" ? "#d8f7ff" :
+                  equippedElement === "nickson" ? "#66f0ff" :
+                  equippedElement === "carter" ? "#fff66a" :
+                  equippedElement === "hunter" ? "#8b5a2b" :
+                  equippedElement === "smoke" ? "#778899" :
+                  equippedElement === "flame" ? "#ff4500" :
+                  equippedElement === "blizzard" ? "#7ec8ff" :
+                  equippedElement === "bomb" ? "#aaaaaa" :
+                  equippedElement === "buh" ? "#ff2288" :
+                  equippedElement === "grass" ? "#4ec44e" :
+                  equippedElement === "lightning" ? "#c060ff" :
+                  equippedElement === "mechanic" ? "#a0b0c0" :
+                  equippedElement === "kai" ? "#d870ff" : player.color)));
+  const plrGlow = ctx.createRadialGradient(player.x, player.y, 0, player.x, player.y, player.radius * 2.6);
+  plrGlow.addColorStop(0, plrBase); plrGlow.addColorStop(0.5, plrBase + "55"); plrGlow.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = plrGlow; ctx.beginPath(); ctx.arc(player.x, player.y, player.radius * 2.6, 0, Math.PI * 2); ctx.fill();
+
+  if (vBoostActiveTimer > 0) {
+    const now = performance.now() / 1000;
+    const haloColor = vBoostMultiplier >= 3 ? "rgba(0, 255, 255, 0.85)" : "rgba(255, 238, 85, 0.85)";
+    ctx.save();
+    ctx.shadowColor = vBoostMultiplier >= 3 ? "#00ffff" : "#ffee55"; ctx.shadowBlur = 30;
+    ctx.strokeStyle = haloColor; ctx.lineWidth = 3;
+    for (let k = 0; k < 3; k++) {
+      const r = player.radius * (1.6 + k * 0.4 + Math.sin(now * 6 + k) * 0.15);
+      ctx.beginPath(); ctx.arc(player.x, player.y, r, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  const pg = ctx.createRadialGradient(player.x - player.radius * 0.3, player.y - player.radius * 0.3, player.radius * 0.1, player.x, player.y, player.radius);
+  pg.addColorStop(0, "#ffffff"); pg.addColorStop(0.4, plrBase); pg.addColorStop(1, plrBase);
+  ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(player.x, player.y, player.radius * (nicksonGrowTimer > 0 ? 2.0 : 1), 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = 2; ctx.stroke();
+  if (equippedElement === "hunter") { const t=nearestEnemyTo(player.x,player.y); const a=t?Math.atan2(t.y-player.y,t.x-player.x):0; ctx.save(); ctx.translate(player.x,player.y); ctx.rotate(a); ctx.fillStyle="#49301d"; ctx.fillRect(8,-7,29,14); ctx.fillStyle="#c18a50"; ctx.fillRect(27,-5,13,10); ctx.restore(); }
+
+  // Hunter's manual SPACE aim preview: mouse direction and splash radius at the aim point.
+  if (equippedElement === "hunter" && !inHome && currentScreen === "game" && !isPaused && hunterSpaceCooldownTimer <= 0) {
+    const a = Math.atan2(mouse.y-player.y, mouse.x-player.x);
+    const aimX = player.x + Math.cos(a) * Math.min(760, Math.hypot(mouse.x-player.x, mouse.y-player.y));
+    const aimY = player.y + Math.sin(a) * Math.min(760, Math.hypot(mouse.x-player.x, mouse.y-player.y));
+    ctx.save(); ctx.strokeStyle = "rgba(242,182,109,0.8)"; ctx.setLineDash([7,6]); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(player.x,player.y); ctx.lineTo(aimX,aimY); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(242,182,109,0.13)"; ctx.strokeStyle = "rgba(242,182,109,0.9)";
+    ctx.beginPath(); ctx.arc(aimX,aimY,115,0,Math.PI*2); ctx.fill(); ctx.stroke(); ctx.restore();
+  }
+  if (hunterFZone) {
+    const z=hunterFZone; ctx.save();
+    ctx.globalAlpha = 0.16 + 0.10 * Math.sin(z.elapsed * 22);
+    ctx.fillStyle="#c18a50"; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.globalAlpha = 0.7; ctx.strokeStyle="#f2c58c"; ctx.lineWidth=3;
+    for (let k=0;k<12;k++) { const x=((k*137 + z.elapsed*520) % (canvas.width+160))-80; const y=(k*83 + Math.sin(z.elapsed*8+k)*45) % canvas.height; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x-35,y+65); ctx.stroke(); }
+    ctx.restore();
+  }
+  for (const ex of hunterExplosions) { ctx.save(); ctx.globalAlpha=Math.max(0,ex.life/ex.maxLife); ctx.fillStyle="rgba(242,182,109,0.22)"; ctx.strokeStyle="#f2b66d"; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(ex.x,ex.y,ex.radius*(1.15-ex.life/ex.maxLife*0.15),0,Math.PI*2); ctx.fill(); ctx.stroke(); ctx.restore(); }
+
+  // HUNTER cannon rounds (render separately so the custom bullets are visible in-game).
+  for (const b of hunterBullets) {
+    const angle = Math.atan2(b.vy || 0, b.vx || 1);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(angle);
+    ctx.shadowColor = b.color; ctx.shadowBlur = 12;
+    ctx.fillStyle = "#fff1d7";
+    ctx.beginPath(); ctx.ellipse(0, 0, b.radius * 1.65, b.radius * 0.8, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = b.color;
+    ctx.beginPath(); ctx.ellipse(0, 0, b.radius * 1.25, b.radius * 0.62, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  for (const p of projectiles) {
+    if (p.trail) for (let i = 0; i < p.trail.length; i++) {
+      const t = p.trail[i];
+      if (t.life <= 0) continue;
+      ctx.globalAlpha = (t.life / 0.3) * 0.5;
+      ctx.fillStyle = "#aaaaaa";
+      ctx.beginPath(); ctx.arc(t.x, t.y, p.radius * (t.life / 0.3), 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius * 1.5);
+    g.addColorStop(0, "#ffffff"); g.addColorStop(1, "rgba(150,150,150,0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, p.radius * 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+    ctx.fillStyle = "#cccccc"; ctx.fill();
+  }
+
+  for (const b of enemyBullets) {
+    const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.radius * 1.8);
+    g.addColorStop(0, "#ffffff"); g.addColorStop(0.5, b.color); g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(b.x, b.y, b.radius * 1.8, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+    ctx.fillStyle = b.color; ctx.fill();
+  }
+
+  if (polarFrostActiveTimer > 0) {
+    const frostW = canvas.width * 0.5, frostH = canvas.height * 0.5;
+    const frostX = player.x - frostW / 2, frostY = player.y - frostH / 2;
+    ctx.save(); ctx.beginPath(); ctx.rect(frostX, frostY, frostW, frostH); ctx.clip();
+    ctx.fillStyle = "rgba(175, 235, 255, 0.18)"; ctx.fillRect(frostX, frostY, frostW, frostH);
+    ctx.strokeStyle = "rgba(220, 250, 255, 0.8)"; ctx.lineWidth = 3;
+    for (let k = 0; k < 24; k++) {
+      const x = frostX + (k * 68.75 + performance.now() * 0.04) % frostW;
+      ctx.beginPath(); ctx.moveTo(x, frostY); ctx.lineTo(x - 40, frostY + frostH); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  if (polarSpinActiveTimer > 0) {
+    ctx.save(); ctx.translate(player.x, player.y); ctx.rotate(polarSpinAngle);
+    ctx.shadowColor = "#b9f4ff"; ctx.shadowBlur = 35;
+    const beamLen = Math.max(canvas.width, canvas.height) * 0.4;
+    ctx.strokeStyle = "rgba(185,244,255,0.75)"; ctx.lineWidth = 19;
+    ctx.beginPath(); ctx.moveTo(-beamLen, 0); ctx.lineTo(beamLen, 0); ctx.stroke();
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 4.5;
+    ctx.beginPath(); ctx.moveTo(-beamLen, 0); ctx.lineTo(beamLen, 0); ctx.stroke();
+    ctx.restore();
+  }
+  for (const puddle of lavaPuddles) {
+    ctx.save(); ctx.globalAlpha = Math.min(0.78, puddle.life / 1.5 + 0.18);
+    ctx.fillStyle = puddle.color === "volcano" ? "#c81d0b" : "#ff4b12";
+    ctx.shadowColor = "#ff3b0b"; ctx.shadowBlur = 28;
+    ctx.beginPath(); ctx.ellipse(puddle.x, puddle.y, puddle.radius, puddle.radius * 0.78, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = "#ffb01f"; ctx.lineWidth = 5; ctx.stroke(); ctx.restore();
+  }
+  for (const shot of magmaShots) { ctx.fillStyle = "#ff5a18"; ctx.shadowColor = "#ff2a00"; ctx.shadowBlur = 18; ctx.beginPath(); ctx.arc(shot.x, shot.y, shot.radius, 0, Math.PI*2); ctx.fill(); ctx.shadowBlur = 0; }
+  for (const shot of volcanoShots) { ctx.fillStyle = "#ffb01f"; ctx.shadowColor = "#ff2a00"; ctx.shadowBlur = 20; ctx.beginPath(); ctx.arc(shot.x, shot.y, shot.radius, 0, Math.PI*2); ctx.fill(); ctx.shadowBlur = 0; }
+  for (const enemy of enemies) drawEnemy(enemy);
+
+  if (activeLaser) {
+    ctx.save();
+    ctx.shadowColor = "#ffe066"; ctx.shadowBlur = 30;
+    const lg = ctx.createLinearGradient(activeLaser.startX, activeLaser.startY, activeLaser.endX, activeLaser.endY);
+    lg.addColorStop(0, "rgba(255, 230, 130, 0.95)");
+    lg.addColorStop(1, "rgba(255, 200, 60, 0.6)");
+    ctx.strokeStyle = lg; ctx.lineWidth = 10;
+    ctx.beginPath(); ctx.moveTo(activeLaser.startX, activeLaser.startY); ctx.lineTo(activeLaser.endX, activeLaser.endY); ctx.stroke();
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.stroke();
+    ctx.restore();
+  }
+
+  // HUD
+  const ratio = Math.max(0, health / maxHealth);
+  ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(20, 20, 220, 32);
+  ctx.fillStyle = "#20c95c"; ctx.fillRect(22, 22, 216 * ratio, 28);
+  ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.strokeRect(20, 20, 220, 32);
+  ctx.fillStyle = "#ffffff"; ctx.font = "bold 18px Arial";
+  ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.fillText("Health: " + Math.max(0, health) + "/" + maxHealth, 30, 36);
+
+  ctx.fillStyle = "#ffffff"; ctx.font = "bold 26px Arial";
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  ctx.fillText("WAVE " + currentWave + (isBossWave(currentWave) ? " - BOSS" : ""), canvas.width / 2, 20);
+  ctx.font = "14px Arial"; ctx.fillStyle = "#cccccc";
+  ctx.fillText("Kills: " + enemiesKilledCurrentWave + "/" + getKillsRequiredForWave(currentWave) + " | Total: " + totalKills + " | Money: $" + money, canvas.width / 2, 54);
+
+  const vBtnX = canvas.width - 180, vBtnY = canvas.height / 2 - 100, vBtnW = 140, vBtnH = 50;
+  const vUnlocked = totalKills >= 50;
+  const vIsV4 = totalKills >= 100;
+  ctx.fillStyle = !vUnlocked ? "rgba(40,40,40,0.7)" : (vBoostActiveTimer > 0 ? (vIsV4 ? "#00c8c8" : "#e0c000") : "rgba(0,0,0,0.6)");
+  ctx.fillRect(vBtnX, vBtnY, vBtnW, vBtnH);
+  ctx.strokeStyle = !vUnlocked ? "#666666" : (vIsV4 ? "#00ffff" : "#ffee55");
+  ctx.lineWidth = 2; ctx.strokeRect(vBtnX, vBtnY, vBtnW, vBtnH);
+  ctx.font = "bold 15px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  if (!vUnlocked) { ctx.fillStyle = "#888888"; ctx.fillText("V: " + totalKills + "/50 kills", vBtnX + vBtnW / 2, vBtnY + vBtnH / 2); }
+  else if (vBoostActiveTimer > 0) { ctx.fillStyle = "#ffffff"; ctx.fillText("[V] " + (vIsV4 ? "V4" : "V3") + " " + vBoostActiveTimer.toFixed(1) + "s", vBtnX + vBtnW / 2, vBtnY + vBtnH / 2); }
+  else if (vBoostCooldownTimer > 0) { ctx.fillStyle = "#888888"; ctx.fillText("[V] " + vBoostCooldownTimer.toFixed(1) + "s", vBtnX + vBtnW / 2, vBtnY + vBtnH / 2); }
+  else { ctx.fillStyle = vIsV4 ? "#00ffff" : "#ffee55"; ctx.fillText("[V] " + (vIsV4 ? "V4 READY" : "V3 READY"), vBtnX + vBtnW / 2, vBtnY + vBtnH / 2); }
+
+  const width = 150, height = 40, margin = 20, offset = 100;
+  const fX = canvas.width - (width * 2) - margin - 10, fY = canvas.height - height - offset;
+  const gX = canvas.width - width - margin, gY = canvas.height - height - offset;
+  ctx.font = "bold 15px Arial";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(fX, fY, width, height);
+  ctx.strokeStyle = "#ffffff"; ctx.strokeRect(fX, fY, width, height);
+
+  if (equippedElement === "sand") {
+    if (auraActiveTimer > 0) { ctx.fillStyle = "#ffe600"; ctx.fillText("[F] AURA " + auraActiveTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+    else if (auraCooldownTimer <= 0) { ctx.fillStyle = "#cca700"; ctx.fillText("[F] Aura READY", fX + width / 2, fY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[F] " + auraCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+  } else if (equippedElement === "smoke") {
+    if (smokeDashActiveTimer > 0) { ctx.fillStyle = "#00ffff"; ctx.fillText("[F] DASH " + smokeDashActiveTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+    else if (smokeDashCooldownTimer <= 0) { ctx.fillStyle = "#00bfff"; ctx.fillText("[F] Smoke Dash", fX + width / 2, fY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[F] " + smokeDashCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+  } else if (equippedElement === "flame") {
+    if (flameOrbCooldownTimer <= 0) { ctx.fillStyle = "#ff4500"; ctx.fillText("[F] Fireball", fX + width / 2, fY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[F] " + flameOrbCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+  } else if (equippedElement === "blizzard") {
+    if (blizzardFieldCooldownTimer <= 0) { ctx.fillStyle = "#7ec8ff"; ctx.fillText("[F] Blizzard Field", fX + width / 2, fY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[F] " + blizzardFieldCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+  } else if (equippedElement === "bomb") {
+    if (bombBigCooldownTimer <= 0) { ctx.fillStyle = "#ffcc00"; ctx.fillText("[F] Big Bomb", fX + width / 2, fY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[F] " + bombBigCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+  } else if (equippedElement === "buh") {
+    if (buhShrineCooldownTimer <= 0) { ctx.fillStyle = "#ff2288"; ctx.fillText("[F] BUH SHRINE", fX + width / 2, fY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[F] " + buhShrineCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+  } else if (equippedElement === "grass") {
+    if (grassFieldCooldownTimer <= 0) { ctx.fillStyle = "#4ec44e"; ctx.fillText("[F] Grass Field", fX + width / 2, fY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[F] " + grassFieldCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+  } else if (equippedElement === "lightning") {
+    if (lightningStormCooldownTimer <= 0) { ctx.fillStyle = "#c060ff"; ctx.fillText("[F] Lightning Storm", fX + width / 2, fY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[F] " + lightningStormCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+  } else if (equippedElement === "mechanic") {
+    if (mechanicSpinActiveTimer > 0) { ctx.fillStyle = "#e0e8f0"; ctx.fillText("[F] SPIN " + mechanicSpinActiveTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+    else if (mechanicSpinCooldownTimer <= 0) { ctx.fillStyle = "#a0b0c0"; ctx.fillText("[F] Robot Spin", fX + width / 2, fY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[F] " + mechanicSpinCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+  } else if (equippedElement === "kai") {
+    if (kaiFieldCooldownTimer <= 0) { ctx.fillStyle = "#d870ff"; ctx.fillText("[F] KAI Gas", fX + width / 2, fY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[F] " + kaiFieldCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2); }
+  } else if (equippedElement === "polar") {
+    ctx.fillStyle = polarSpinCooldownTimer <= 0 ? "#b9f4ff" : "#888888";
+    ctx.fillText(polarSpinActiveTimer > 0 ? "[F] POLAR SPIN " + polarSpinActiveTimer.toFixed(1) + "s" : (polarSpinCooldownTimer <= 0 ? "[F] Polar Spin Laser" : "[F] " + polarSpinCooldownTimer.toFixed(1) + "s"), fX + width / 2, fY + height / 2);
+  } else if (equippedElement === "lava") {
+    ctx.fillStyle = lavaFCooldownTimer <= 0 ? "#ff5a18" : "#888888"; ctx.fillText(lavaBallInvulnerable ? "[F] MAGMA BALL " + lavaBallTimer.toFixed(1) + "s" : (lavaFCooldownTimer <= 0 ? "[F] Magma Ball" : "[F] " + lavaFCooldownTimer.toFixed(1) + "s"), fX + width / 2, fY + height / 2);
+  } else if (equippedElement === "volcano") {
+    ctx.fillStyle = volcanoFCooldownTimer <= 0 ? "#ff5a18" : "#888888"; ctx.fillText(volcanoFCooldownTimer <= 0 ? "[F] 10 Homing Magma Balls" : "[F] " + volcanoFCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2);
+  } else if (equippedElement === "iceberg") {
+    ctx.fillStyle = icebergFCooldownTimer <= 0 ? "#d8f7ff" : "#888888";
+    ctx.fillText(icebergStormTimer > 0 ? "[F] BLIZZARD STORM " + icebergStormTimer.toFixed(1) + "s" : (icebergFCooldownTimer <= 0 ? "[F] Map Blizzard Storm" : "[F] " + icebergFCooldownTimer.toFixed(1) + "s"), fX + width / 2, fY + height / 2);
+  } else if (equippedElement === "hunter") {
+    ctx.fillStyle = hunterFCooldownTimer <= 0 ? "#c18a50" : "#888888";
+    ctx.fillText(hunterFZone ? "[F] BULLET ZONE" : (hunterFCooldownTimer <= 0 ? "[F] Map Bullet Storm (2000/s × 3s)" : "[F] " + hunterFCooldownTimer.toFixed(1) + "s"), fX + width / 2, fY + height / 2);
+  } else if (equippedElement === "carter") {
+    ctx.fillStyle = carterFCooldownTimer <= 0 ? "#fff66a" : "#888888";
+    ctx.fillText(carterLightningTimer > 0 ? "[F] MAP ZAP " + carterLightningTimer.toFixed(1) + "s" : (carterFCooldownTimer <= 0 ? "[F] Map Lightning (2000/s)" : "[F] " + carterFCooldownTimer.toFixed(1) + "s"), fX + width / 2, fY + height / 2);
+  } else if (equippedElement === "nickson") {
+    ctx.fillStyle = nicksonShockCooldownTimer <= 0 ? "#66f0ff" : "#888888";
+    ctx.fillText(nicksonShockCooldownTimer <= 0 ? "[F] Map Shockwave (200)" : "[F] " + nicksonShockCooldownTimer.toFixed(1) + "s", fX + width / 2, fY + height / 2);
+  }
+
+  ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(gX, gY, width, height);
+  ctx.strokeStyle = "#ffffff"; ctx.strokeRect(gX, gY, width, height);
+
+  if (equippedElement === "sand") {
+    if (beamCooldownTimer <= 0) { ctx.fillStyle = "#cca700"; ctx.fillText("[G] Beam READY", gX + width / 2, gY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[G] " + beamCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2); }
+  } else if (equippedElement === "smoke") {
+    if (smokeShotCooldownTimer <= 0) { ctx.fillStyle = "#00bfff"; ctx.fillText("[G] Smoke Shot", gX + width / 2, gY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[G] " + smokeShotCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2); }
+  } else if (equippedElement === "flame") {
+    if (flameSpinActiveTimer > 0) { ctx.fillStyle = "#ffcc00"; ctx.fillText("[G] SPIN " + flameSpinActiveTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2); }
+    else if (flameSpinCooldownTimer <= 0) { ctx.fillStyle = "#ff4500"; ctx.fillText("[G] Spin Laser", gX + width / 2, gY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[G] " + flameSpinCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2); }
+  } else if (equippedElement === "blizzard") {
+    if (iceSpikeCooldownTimer <= 0) { ctx.fillStyle = "#7ec8ff"; ctx.fillText("[G] Ice Cross", gX + width / 2, gY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[G] " + iceSpikeCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2); }
+  } else if (equippedElement === "bomb") {
+    if (bombMiniCooldownTimer <= 0) { ctx.fillStyle = "#ffcc00"; ctx.fillText("[G] Mini Bomb", gX + width / 2, gY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[G] " + bombMiniCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2); }
+  } else if (equippedElement === "buh") {
+    if (buhBarrageCooldownTimer <= 0) { ctx.fillStyle = "#ff2288"; ctx.fillText("[G] Buh Barrage", gX + width / 2, gY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[G] " + buhBarrageCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2); }
+  } else if (equippedElement === "grass") {
+    if (grassShotCooldownTimer <= 0) { ctx.fillStyle = "#4ec44e"; ctx.fillText("[G] Grass Shards", gX + width / 2, gY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[G] " + grassShotCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2); }
+  } else if (equippedElement === "lightning") {
+    if (lightningBoltCooldownTimer <= 0) { ctx.fillStyle = "#c060ff"; ctx.fillText("[G] Lightning Bolt", gX + width / 2, gY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[G] " + lightningBoltCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2); }
+  } else if (equippedElement === "mechanic") {
+    if (mechanicClawCooldownTimer <= 0) { ctx.fillStyle = "#a0b0c0"; ctx.fillText("[G] 6 Claws", gX + width / 2, gY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[G] " + mechanicClawCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2); }
+  } else if (equippedElement === "kai") {
+    if (kaiOrbCooldownTimer <= 0) { ctx.fillStyle = "#d870ff"; ctx.fillText("[G] KAI Orbs", gX + width / 2, gY + height / 2); }
+    else { ctx.fillStyle = "#888888"; ctx.fillText("[G] " + kaiOrbCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2); }
+  } else if (equippedElement === "polar") {
+    ctx.fillStyle = polarFrostCooldownTimer <= 0 ? "#b9f4ff" : "#888888";
+    ctx.fillText(polarFrostActiveTimer > 0 ? "[G] FROST WAVE " + polarFrostActiveTimer.toFixed(1) + "s" : (polarFrostCooldownTimer <= 0 ? "[G] Polar Frost Wave" : "[G] " + polarFrostCooldownTimer.toFixed(1) + "s"), gX + width / 2, gY + height / 2);
+  } else if (equippedElement === "lava") {
+    ctx.fillStyle = lavaGCooldownTimer <= 0 ? "#ff5a18" : "#888888"; ctx.fillText(lavaGCooldownTimer <= 0 ? "[G] Magma Burst" : "[G] " + lavaGCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2);
+  } else if (equippedElement === "volcano") {
+    ctx.fillStyle = volcanoGCooldownTimer <= 0 ? "#ff5a18" : "#888888"; ctx.fillText(volcanoGCooldownTimer <= 0 ? "[G] Huge Lava AOE" : "[G] " + volcanoGCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2);
+  } else if (equippedElement === "iceberg") {
+    ctx.fillStyle = icebergGCooldownTimer <= 0 ? "#d8f7ff" : "#888888";
+    ctx.fillText(icebergGCooldownTimer <= 0 ? "[G] 4 Mini Icebergs (20k each)" : "[G] " + icebergGCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2);
+  } else if (equippedElement === "hunter") {
+    ctx.fillStyle = hunterGCooldownTimer <= 0 ? "#c18a50" : "#888888";
+    ctx.fillText(hunterGCooldownTimer <= 0 ? "[G] 10 Homing Cannons (4s)" : "[G] " + hunterGCooldownTimer.toFixed(1) + "s", gX + width / 2, gY + height / 2);
+  } else if (equippedElement === "carter") {
+    ctx.fillStyle = carterGCooldownTimer <= 0 ? "#fff66a" : "#888888";
+    ctx.fillText(carterAuraTimer > 0 ? "[G] LIGHTNING AURA " + carterAuraTimer.toFixed(1) + "s" : (carterGCooldownTimer <= 0 ? "[G] Lightning Aura" : "[G] " + carterGCooldownTimer.toFixed(1) + "s"), gX + width / 2, gY + height / 2);
+  } else if (equippedElement === "nickson") {
+    ctx.fillStyle = nicksonGrowCooldownTimer <= 0 ? "#66f0ff" : "#888888";
+    ctx.fillText(nicksonGrowTimer > 0 ? "[G] GROWN " + nicksonGrowTimer.toFixed(1) + "s" : (nicksonGrowCooldownTimer <= 0 ? "[G] Grow & Suck" : "[G] " + nicksonGrowCooldownTimer.toFixed(1) + "s"), gX + width / 2, gY + height / 2);
+  }
+
+  const spaceX = canvas.width / 2 - 80, spaceY = canvas.height - 60;
+  ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(spaceX, spaceY, 160, 40);
+  ctx.strokeStyle = "#ffffff"; ctx.strokeRect(spaceX, spaceY, 160, 40);
+  if (equippedElement === "carter") {
+    ctx.fillStyle = "#fff66a"; ctx.fillText("[SPACE] NO M1", spaceX + 80, spaceY + 20);
+  } else if ((equippedElement === "iceberg" ? icebergMeleeCooldownTimer : meleeCooldownTimer) <= 0) {
+    if (equippedElement === "flame") { ctx.fillStyle = "#ff4500"; ctx.fillText("[SPACE] Sword Slash", spaceX + 80, spaceY + 20); }
+    else if (equippedElement === "blizzard") { ctx.fillStyle = "#7ec8ff"; ctx.fillText("[SPACE] Ice Sword", spaceX + 80, spaceY + 20); }
+    else if (equippedElement === "bomb") { ctx.fillStyle = "#ffcc00"; ctx.fillText("[SPACE] Bomb Punch", spaceX + 80, spaceY + 20); }
+    else if (equippedElement === "buh") { ctx.fillStyle = "#ff2288"; ctx.fillText("[SPACE] Buh Slash", spaceX + 80, spaceY + 20); }
+    else if (equippedElement === "grass") { ctx.fillStyle = "#4ec44e"; ctx.fillText("[SPACE] Grass Slash", spaceX + 80, spaceY + 20); }
+    else if (equippedElement === "lightning") { ctx.fillStyle = "#c060ff"; ctx.fillText("[SPACE] Lightning Slash", spaceX + 80, spaceY + 20); }
+    else if (equippedElement === "mechanic") { ctx.fillStyle = "#a0b0c0"; ctx.fillText("[SPACE] Mech Punch", spaceX + 80, spaceY + 20); }
+    else if (equippedElement === "kai") { ctx.fillStyle = "#d870ff"; ctx.fillText("[SPACE] KAI Slash", spaceX + 80, spaceY + 20); }
+    else if (equippedElement === "polar") { ctx.fillStyle = "#b9f4ff"; ctx.fillText("[SPACE] Polar Slash", spaceX + 80, spaceY + 20); }
+    else if (equippedElement === "iceberg") { ctx.fillStyle = "#d8f7ff"; ctx.fillText("[SPACE] Iceberg Beam", spaceX + 80, spaceY + 20); }
+    else if (equippedElement === "hunter") { ctx.fillStyle = "#c18a50"; ctx.fillText("[SPACE] Aim Cannon AoE (2000)", spaceX + 80, spaceY + 20); }
+    else { ctx.fillStyle = "#666666"; ctx.fillText("[SPACE] Melee (n/a)", spaceX + 80, spaceY + 20); }
+  } else {
+    ctx.fillStyle = "#888888";
+    const remainingMelee = equippedElement === "iceberg" ? icebergMeleeCooldownTimer : (equippedElement === "hunter" ? hunterSpaceCooldownTimer : meleeCooldownTimer);
+    ctx.fillText("[SPACE] " + remainingMelee.toFixed(1) + "s", spaceX + 80, spaceY + 20);
+  }
+
+  // Cutscene overlay
+  if (cutscene) {
+    const t = cutscene.timer / cutscene.maxTimer;
+    if (cutscene.type === "bossIntro") {
+      // dark red vignette
+      const alpha = 1 - Math.abs(t - 0.5) * 2;
+      ctx.fillStyle = "rgba(120, 0, 0, " + (alpha * 0.55) + ")";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#ff3333";
+      ctx.font = "bold 90px Arial";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.save();
+      ctx.shadowColor = "#ff0000"; ctx.shadowBlur = 40;
+      ctx.fillText("BOSS INCOMING", canvas.width / 2, canvas.height / 2 - 40);
+      ctx.font = "bold 40px Arial";
+      ctx.fillStyle = "#ffaaaa";
+      ctx.fillText("BOSS #" + (cutscene.data.bossNum || 1), canvas.width / 2, canvas.height / 2 + 50);
+      ctx.restore();
+    } else if (cutscene.type === "bossDefeated") {
+      const alpha = 1 - Math.abs(t - 0.5) * 2;
+      ctx.fillStyle = "rgba(255, 200, 0, " + (alpha * 0.35) + ")";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#ffdd00";
+      ctx.font = "bold 80px Arial";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.save();
+      ctx.shadowColor = "#ffdd00"; ctx.shadowBlur = 40;
+      ctx.fillText("BOSS DEFEATED", canvas.width / 2, canvas.height / 2);
+      ctx.restore();
+    }
+  } else if (isPaused && currentScreen === "raidshop") {
+    ctx.fillStyle = "rgba(5,12,22,0.98)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#8deaff"; ctx.font = "bold 42px Arial";
+    ctx.fillText("RAID SHOP", canvas.width / 2, 70);
+    ctx.fillStyle = "#ffe88a"; ctx.font = "bold 22px Arial";
+    ctx.fillText("RAID COINS: " + raidCoins, canvas.width / 2, 115);
+    ctx.fillStyle = "#ffb36a"; ctx.font = "bold 24px Arial";
+    ctx.fillText("ELEMENT CRATE · 50 RAID COINS", canvas.width / 2, canvas.height / 2 - 55);
+    ctx.fillStyle = "#ffcf99"; ctx.font = "18px Arial";
+    ctx.fillText("Lava 99%  |  Volcano 1%", canvas.width / 2, canvas.height / 2 - 20);
+    const crate = { x: canvas.width / 2 - 130, y: canvas.height / 2 + 5, w: 260, h: 55 };
+    ctx.fillStyle = raidCoins >= 50 ? "#b84512" : "#454545"; ctx.fillRect(crate.x, crate.y, crate.w, crate.h);
+    ctx.strokeStyle = "#ffb36a"; ctx.lineWidth = 2; ctx.strokeRect(crate.x, crate.y, crate.w, crate.h);
+    ctx.fillStyle = "#ffffff"; ctx.font = "bold 20px Arial"; ctx.fillText("ROLL CRATE", canvas.width / 2, crate.y + crate.h / 2);
+    ctx.fillStyle = "#ffd08a"; ctx.font = "16px Arial"; ctx.fillText(raidCrateMessage, canvas.width / 2, crate.y + 78);
+    const back = { x: canvas.width / 2 - 90, y: canvas.height - 95, w: 180, h: 48 };
+    ctx.fillStyle = "#135a75"; ctx.fillRect(back.x, back.y, back.w, back.h);
+    ctx.strokeStyle = "#8deaff"; ctx.strokeRect(back.x, back.y, back.w, back.h);
+    ctx.fillStyle = "#ffffff"; ctx.font = "bold 18px Arial";
+    ctx.fillText("BACK", canvas.width / 2, back.y + back.h / 2);
+  }
+
+  ctx.restore(); // end shake
+
+  // Pause / Gacha screens (drawn without shake)
+  const btnX = canvas.width - 104, btnY = 12, btnW = 90, btnH = 34;
+  if (isPaused && currentScreen === "game") {
+    ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#ffffff"; ctx.font = "bold 48px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("GAME PAUSED", canvas.width / 2, canvas.height / 2 - 20);
+    ctx.font = "20px Arial"; ctx.fillStyle = "#cccccc";
+    ctx.fillText("Press '1' to Resume", canvas.width / 2, canvas.height / 2 + 35);
+    ctx.fillStyle = "#cca700"; ctx.fillRect(btnX, btnY, btnW, btnH);
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.strokeRect(btnX, btnY, btnW, btnH);
+    ctx.fillStyle = "#ffffff"; ctx.font = "bold 22px Arial";
+    ctx.fillText("GACHA", btnX + btnW / 2, btnY + btnH / 2);
+    const shopY = btnY + btnH + 12;
+    ctx.fillStyle = "#135a75"; ctx.fillRect(btnX, shopY, btnW, btnH);
+    ctx.strokeStyle = "#8deaff"; ctx.strokeRect(btnX, shopY, btnW, btnH);
+    ctx.fillStyle = "#ffffff"; ctx.font = "bold 18px Arial";
+    ctx.fillText("RAID SHOP", btnX + btnW / 2, shopY + btnH / 2);
+  } else if (isPaused && currentScreen === "gacha") {
+    // Polished gacha layout: chest and rolls above two large, easy-to-click equipment panels.
+    const W = canvas.width, H = canvas.height;
+    const bg = ctx.createLinearGradient(0, 0, W, H);
+    bg.addColorStop(0, "rgba(13,12,31,0.985)");
+    bg.addColorStop(0.55, "rgba(17,13,35,0.985)");
+    bg.addColorStop(1, "rgba(8,18,31,0.99)");
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#f7d879"; ctx.font = "bold 28px Arial";
+    ctx.shadowColor = "rgba(255,196,65,.35)"; ctx.shadowBlur = 16;
+    ctx.fillText("GACHA & EQUIP", W / 2, 27); ctx.shadowBlur = 0;
+
+    const cx = W / 2, chestY = 77;
+    let chestShakeX = 0, chestShakeY = 0;
+    if (gachaState === "shaking") { chestShakeX = (Math.random() - 0.5) * 8; chestShakeY = (Math.random() - 0.5) * 5; }
+    ctx.save(); ctx.translate(cx + chestShakeX, chestY + chestShakeY);
+    ctx.shadowColor = "#e8ad45"; ctx.shadowBlur = 18;
+    ctx.fillStyle = "#75451f"; ctx.beginPath(); ctx.roundRect(-42, -5, 84, 42, 8); ctx.fill();
+    ctx.strokeStyle = "#f1c66a"; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = "#a76a30"; ctx.beginPath(); ctx.roundRect(-45, -18, 90, 23, 8); ctx.fill();
+    ctx.strokeStyle = "#f7d879"; ctx.stroke();
+    ctx.fillStyle = "#f8d66d"; ctx.fillRect(-7, 1, 14, 25);
+    ctx.fillStyle = "#fff1b3"; ctx.beginPath(); ctx.arc(0, 12, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    if (gachaState === "opening") {
+      ctx.save(); ctx.shadowColor = "#ffe16a"; ctx.shadowBlur = 25;
+      ctx.fillStyle = "#ffe16a"; ctx.font = "bold 34px Arial"; ctx.fillText("???", cx, chestY + 14); ctx.restore();
+    } else if (gachaState === "reveal" && gachaResult) {
+      ctx.save(); ctx.shadowColor = gachaResult.color; ctx.shadowBlur = 25;
+      ctx.fillStyle = gachaResult.color; ctx.font = "bold 25px Arial"; ctx.fillText(gachaResult.name, cx, chestY + 14);
+      ctx.fillStyle = "#ffffff"; ctx.font = "bold 13px Arial"; ctx.fillText(gachaResult.rate + " RARITY", cx, chestY + 37); ctx.restore();
+    }
+
+    const rollY = 123, rollW = Math.min(190, Math.max(125, W * 0.22)), rollH = 38, rollGap = 10;
+    const rollBtn = { x: cx - rollW - rollGap / 2, y: rollY, w: rollW, h: rollH };
+    const fastRollBtn = { x: cx + rollGap / 2, y: rollY, w: rollW, h: rollH };
+    function gachaButton(rect, color, stroke, label, enabled) {
+      ctx.save(); ctx.shadowColor = enabled ? color : "transparent"; ctx.shadowBlur = enabled ? 10 : 0;
+      ctx.fillStyle = enabled ? color : "#353744"; ctx.beginPath(); ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 10); ctx.fill();
+      ctx.strokeStyle = enabled ? stroke : "#555766"; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = enabled ? "#ffffff" : "#999aaa"; ctx.font = "bold 14px Arial"; ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2);
+      ctx.restore();
+    }
+    gachaButton(rollBtn, "#23884b", "#8df3a8", "ROLL · $10", gachaState === "idle");
+    gachaButton(fastRollBtn, "#126b8c", "#8deaff", "FAST ROLL · $15", gachaState === "idle");
+    ctx.fillStyle = "#f8d879"; ctx.font = "bold 12px Arial";
+    ctx.fillText("MONEY: " + money + "     ·     RAID COINS: " + raidCoins, cx, 174);
+
+    const panelTop = 193, panelBottom = H - 57, panelH = Math.max(120, panelBottom - panelTop);
+    const margin = 12, gapPanels = 10, panelW = (W - margin * 2 - gapPanels) / 2;
+    const leftPanel = { x: margin, y: panelTop, w: panelW, h: panelH };
+    const rightPanel = { x: margin + panelW + gapPanels, y: panelTop, w: panelW, h: panelH };
+    function panel(rect, title, accent) {
+      ctx.save(); ctx.shadowColor = accent; ctx.shadowBlur = 9;
+      ctx.fillStyle = "rgba(21,25,42,0.96)"; ctx.beginPath(); ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 13); ctx.fill();
+      ctx.shadowBlur = 0; ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = accent; ctx.font = "bold 15px Arial"; ctx.fillText(title, rect.x + rect.w / 2, rect.y + 20);
+      ctx.strokeStyle = "rgba(255,255,255,0.12)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(rect.x + 10, rect.y + 37); ctx.lineTo(rect.x + rect.w - 10, rect.y + 37); ctx.stroke();
+      ctx.restore();
+    }
+    panel(leftPanel, "YOUR ABILITIES", "#c5a8ff");
+    panel(rightPanel, "RAID ELEMENTS", "#ff9a62");
+
+    const elems = [
+      { key: "sand", name: "SAND", rate: "26%", color: "#c7a72a", unlocked: true },
+      { key: "smoke", name: "SMOKE", rate: "17%", color: "#25bce6", unlocked: unlockedElements.smoke },
+      { key: "stat", name: "STAT", rate: "14.33%", color: "#20c95c", unlocked: true },
+      { key: "grass", name: "GRASS", rate: "14%", color: "#4ec44e", unlocked: unlockedElements.grass },
+      { key: "kai", name: "KAI", rate: "11%", color: "#d870ff", unlocked: unlockedElements.kai },
+      { key: "bomb", name: "BOMB", rate: "5%", color: "#ffcc00", unlocked: unlockedElements.bomb },
+      { key: "flame", name: "FLAME", rate: "5%", color: "#ff653d", unlocked: unlockedElements.flame },
+      { key: "lightning", name: "LIGHTNING", rate: "4%", color: "#c060ff", unlocked: unlockedElements.lightning },
+      { key: "nickson", name: "NICKSON", rate: "1%", color: "#66f0ff", unlocked: unlockedElements.nickson },
+      { key: "mechanic", name: "MECHANIC", rate: "1%", color: "#a0b0c0", unlocked: unlockedElements.mechanic },
+      { key: "blizzard", name: "BLIZZARD", rate: "1%", color: "#7ec8ff", unlocked: unlockedElements.blizzard },
+      { key: "buh", name: "BUH", rate: "0.5%", color: "#ff2288", unlocked: unlockedElements.buh },
+      { key: "hunt", name: "HUNTER", rate: "0.1%", color: "#c18a50", unlocked: unlockedElements.hunter },
+      { key: "carter", name: "CARTER", rate: "0.07%", color: "#fff66a", unlocked: unlockedElements.carter },
+      { key: "polar", name: "POLAR", rate: "0.05%", color: "#b9f4ff", unlocked: unlockedElements.polar },
+      { key: "iceberg", name: "ICEBERG", rate: "0.01%", color: "#d8f7ff", unlocked: unlockedElements.iceberg }
+    ];
+    const cols = leftPanel.w < 300 ? 2 : 4;
+    const innerX = leftPanel.x + 9, innerY = leftPanel.y + 45;
+    const innerW = leftPanel.w - 18, innerH = leftPanel.h - 54;
+    const cardGap = 7, cardW = (innerW - cardGap * (cols - 1)) / cols;
+    const rows = Math.ceil(elems.length / cols), cardH = Math.max(35, (innerH - cardGap * (rows - 1)) / rows);
+    for (let i = 0; i < elems.length; i++) {
+      const e = elems[i], col = i % cols, row = Math.floor(i / cols);
+      const r = { x: innerX + col * (cardW + cardGap), y: innerY + row * (cardH + cardGap), w: cardW, h: cardH };
+      const isEq = e.key === "hunt" ? equippedElement === "hunter" : equippedElement === e.key;
+      ctx.save();
+      ctx.fillStyle = !e.unlocked ? "rgba(10,12,20,0.95)" : (isEq ? e.color : "rgba(44,49,68,0.96)");
+      ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 9); ctx.fill();
+      ctx.strokeStyle = isEq ? "#fff3b0" : (e.unlocked ? e.color : "#4c5060"); ctx.lineWidth = isEq ? 3 : 1.5; ctx.stroke();
+      // Larger fruit/orb icon, with a shine so each selection is easy to spot and tap.
+      const rad = Math.min(15, Math.max(9, cardH * 0.24));
+      const ix = r.x + (cols === 4 ? 20 : r.w / 2), iy = r.y + Math.min(r.h / 2, 22);
+      const orb = ctx.createRadialGradient(ix - rad * .35, iy - rad * .4, 1, ix, iy, rad * 1.3);
+      orb.addColorStop(0, e.unlocked ? "#ffffff" : "#666977"); orb.addColorStop(.28, e.unlocked ? e.color : "#444653"); orb.addColorStop(1, "#171923");
+      ctx.fillStyle = orb; ctx.beginPath(); ctx.arc(ix, iy, rad, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = e.unlocked ? "rgba(255,255,255,.85)" : "#656979"; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.beginPath(); ctx.arc(ix - rad * .32, iy - rad * .36, Math.max(2, rad * .22), 0, Math.PI * 2); ctx.fill();
+      const textX = cols === 4 ? r.x + 40 : r.x + r.w / 2;
+      const maxTextW = cols === 4 ? r.w - 43 : r.w - 8;
+      ctx.fillStyle = e.unlocked ? "#ffffff" : "#8a8c98";
+      ctx.font = "bold " + (cardH < 43 ? 9 : 11) + "px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText(e.name, textX + (cols === 4 ? maxTextW / 2 - 1 : 0), r.y + (cols === 4 ? r.h * .37 : r.h * .58), maxTextW);
+      ctx.font = "bold 9px Arial";
+      const status = !e.unlocked ? e.rate : (isEq ? "EQUIPPED" : "EQUIP");
+      ctx.fillStyle = isEq ? "#fff1a3" : (e.unlocked ? "#c8d0e7" : "#777b89");
+      ctx.fillText(status, textX + (cols === 4 ? maxTextW / 2 - 1 : 0), r.y + (cols === 4 ? r.h * .72 : r.h * .82), maxTextW);
+      ctx.restore();
+    }
+
+    const raidElems = [
+      { key: "lava", name: "LAVA", color: "#ff6a24", rate: "99% crate chance", unlocked: unlockedElements.lava, desc: "Magma field + magma-ball form" },
+      { key: "volcano", name: "VOLCANO", color: "#ba3a20", rate: "1% crate chance", unlocked: unlockedElements.volcano, desc: "Huge lava zone + homing magma" }
+    ];
+    const raidGap = 12, raidInnerY = rightPanel.y + 48, raidInnerH = rightPanel.h - 58;
+    const raidCardH = Math.max(58, (raidInnerH - raidGap) / 2);
+    for (let i = 0; i < raidElems.length; i++) {
+      const e = raidElems[i], r = { x: rightPanel.x + 10, y: raidInnerY + i * (raidCardH + raidGap), w: rightPanel.w - 20, h: raidCardH };
+      const isEq = equippedElement === e.key;
+      ctx.save();
+      ctx.fillStyle = !e.unlocked ? "rgba(17,18,27,.96)" : (isEq ? "rgba(105,43,30,.96)" : "rgba(47,35,42,.96)");
+      ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.fill();
+      ctx.strokeStyle = isEq ? "#fff1b1" : (e.unlocked ? e.color : "#55505a"); ctx.lineWidth = isEq ? 3 : 2; ctx.stroke();
+      const rad = Math.min(26, Math.max(16, raidCardH * .22));
+      const ix = r.x + 34, iy = r.y + r.h / 2;
+      const orb = ctx.createRadialGradient(ix - rad * .3, iy - rad * .4, 1, ix, iy, rad * 1.4);
+      orb.addColorStop(0, e.unlocked ? "#fff4d8" : "#66616a"); orb.addColorStop(.25, e.unlocked ? e.color : "#47434b"); orb.addColorStop(1, "#1b171c");
+      ctx.fillStyle = orb; ctx.beginPath(); ctx.arc(ix, iy, rad, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = e.unlocked ? "#ffd9a8" : "#77717b"; ctx.lineWidth = 2; ctx.stroke();
+      ctx.textAlign = "left"; ctx.fillStyle = e.unlocked ? "#ffffff" : "#99939e";
+      ctx.font = "bold 16px Arial"; ctx.fillText(e.name, r.x + 70, r.y + r.h * .31, r.w - 80);
+      ctx.font = "11px Arial"; ctx.fillStyle = e.unlocked ? "#e4d4d4" : "#817a85"; ctx.fillText(e.rate, r.x + 70, r.y + r.h * .53, r.w - 80);
+      ctx.font = "10px Arial"; ctx.fillStyle = e.unlocked ? "#c6d2e2" : "#817a85"; ctx.fillText(e.unlocked ? e.desc : "Unlock from Raid Crates", r.x + 70, r.y + r.h * .70, r.w - 80);
+      ctx.textAlign = "right"; ctx.font = "bold 10px Arial"; ctx.fillStyle = isEq ? "#fff1a3" : (e.unlocked ? "#ffbd8d" : "#77717b");
+      ctx.fillText(!e.unlocked ? "LOCKED" : (isEq ? "EQUIPPED" : "CLICK TO EQUIP"), r.x + r.w - 10, r.y + r.h - 12, r.w - 90);
+      ctx.restore();
+    }
+
+    if (lastRollResult && gachaState === "idle") {
+      ctx.fillStyle = "#ffe28a"; ctx.font = "bold 12px Arial";
+      ctx.fillText(lastRollResult, W / 2, H - 43, W - 30);
+    }
+    // Compact return button stays in the top-right corner, clear of the equipment cards.
+    const btnX = W - 104, btnY = 12, btnW = 90, btnH = 34;
+    ctx.fillStyle = "#42326e"; ctx.beginPath(); ctx.roundRect(btnX, btnY, btnW, btnH, 9); ctx.fill();
+    ctx.strokeStyle = "#c7a8ff"; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = "#ffffff"; ctx.font = "bold 13px Arial"; ctx.fillText("GAME", btnX + btnW / 2, btnY + btnH / 2);
+  }
+
+  // Death cutscene (drawn on top of everything)
+  if (cutscene && cutscene.type === "death") {
+    const t = cutscene.timer / cutscene.maxTimer;
+    const alpha = Math.min(1, (1 - t) * 2);
+    ctx.fillStyle = "rgba(60, 0, 0, " + (alpha * 0.85) + ")";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = "#ff0000"; ctx.shadowBlur = 60;
+    ctx.fillStyle = "#ff2222";
+    ctx.font = "bold 110px Arial";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("YOU DIED", canvas.width / 2, canvas.height / 2);
+    ctx.font = "24px Arial";
+    ctx.fillStyle = "#ffaaaa";
+    ctx.fillText("returning to lobby...", canvas.width / 2, canvas.height / 2 + 80);
+    ctx.restore();
+  }
+}
+
+function gameLoop(now) {
+  const dt = Math.min(Math.max(0, (now - lastTime) / 1000), 0.1);
+  lastTime = now;
+
+  // Gacha animation state machine
+  if (gachaState !== "idle") {
+    gachaTimer -= dt;
+    if (gachaState === "shaking" && gachaTimer <= 0) {
+      gachaState = "opening";
+      gachaTimer = 1.2;
+    } else if (gachaState === "opening" && gachaTimer <= 0) {
+      gachaState = "reveal";
+      gachaTimer = 1.5;
+      if (gachaResult) lastRollResult = gachaResult.msg;
+    } else if (gachaState === "reveal" && gachaTimer <= 0) {
+      gachaState = "idle";
+    }
+  }
+
+  if (inHome) drawHome();
+  else { update(dt); draw(); }
+  requestAnimationFrame(gameLoop);
+}
+
+window.addEventListener("click", function (e) {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  if (inHome) {
+    const btnW = 260, btnH = 76;
+    const btnX = canvas.width / 2 - btnW / 2;
+    const btnY = canvas.height / 2 + 40;
+    const raidY = btnY + btnH + 12, raidH = 58;
+    if (mx >= btnX && mx <= btnX + btnW && my >= btnY && my <= btnY + btnH) {
+      isRaidMode = false;
+      currentWave = normalWave;
+      resetGame(true, true);
+      inHome = false; homeBalls = []; homeFx = [];
+      startWave();
+    } else if (mx >= btnX && mx <= btnX + btnW && my >= raidY && my <= raidY + raidH) {
+      isRaidMode = true;
+      currentWave = raidWave;
+      resetGame(true, true);
+      inHome = false; homeBalls = []; homeFx = [];
+      startWave();
+    }
+    return;
+  }
+
+  if (!isPaused || cutscene) return;
+
+  const btnX = canvas.width - 104, btnY = 12, btnW = 90, btnH = 34;
+  if (currentScreen === "raidshop") {
+    const crate = { x: canvas.width / 2 - 130, y: canvas.height / 2 + 5, w: 260, h: 55 };
+    if (mx >= crate.x && mx <= crate.x + crate.w && my >= crate.y && my <= crate.y + crate.h) { rollRaidCrate(); return; }
+    const back = { x: canvas.width / 2 - 90, y: canvas.height - 95, w: 180, h: 48 };
+    if (mx >= back.x && mx <= back.x + back.w && my >= back.y && my <= back.y + back.h) currentScreen = "game";
+    return;
+  }
+  if (currentScreen === "gacha" && mx >= canvas.width - 104 && mx <= canvas.width - 14 && my >= 12 && my <= 46) {
+    currentScreen = "game"; gachaState = "idle"; return;
+  }
+  if (currentScreen === "game" && mx >= btnX && mx <= btnX + btnW && my >= btnY && my <= btnY + btnH) {
+    currentScreen = "gacha"; gachaState = "idle"; return;
+  } else if (currentScreen !== "game" && mx >= btnX && mx <= btnX + btnW && my >= btnY && my <= btnY + btnH) {
+    currentScreen = "game"; gachaState = "idle"; return;
+  }
+  if (currentScreen === "game") {
+    const shopY = btnY + btnH + 12;
+    if (mx >= btnX && mx <= btnX + btnW && my >= shopY && my <= shopY + btnH) { currentScreen = "raidshop"; return; }
+  }
+  if (currentScreen === "gacha" && gachaState === "idle") {
+    const W = canvas.width, H = canvas.height, cx = W / 2;
+    const rollY = 123, rollW = Math.min(190, Math.max(125, W * 0.22)), rollH = 38, rollGap = 10;
+    const rollBtn = { x: cx - rollW - rollGap / 2, y: rollY, w: rollW, h: rollH };
+    const fastRollBtn = { x: cx + rollGap / 2, y: rollY, w: rollW, h: rollH };
+    if (mx >= rollBtn.x && mx <= rollBtn.x + rollBtn.w && my >= rollBtn.y && my <= rollBtn.y + rollBtn.h) { rollGacha(false); return; }
+    if (mx >= fastRollBtn.x && mx <= fastRollBtn.x + fastRollBtn.w && my >= fastRollBtn.y && my <= fastRollBtn.y + fastRollBtn.h) {
+      if (money < 15) { lastRollResult = "Need at least 15 Money for Fast Roll!"; return; }
+      money -= 15; saveGameData(); rollGacha(true); return;
+    }
+    const panelTop = 193, panelBottom = H - 57, panelH = Math.max(120, panelBottom - panelTop);
+    const margin = 12, gapPanels = 10, panelW = (W - margin * 2 - gapPanels) / 2;
+    const leftPanel = { x: margin, y: panelTop, w: panelW, h: panelH };
+    const rightPanel = { x: margin + panelW + gapPanels, y: panelTop, w: panelW, h: panelH };
+    const elems = ["sand", "smoke", "stat", "grass", "kai", "bomb", "flame", "lightning", "nickson", "mechanic", "blizzard", "buh", "hunt", "carter", "polar", "iceberg"];
+    const cols = leftPanel.w < 300 ? 2 : 4;
+    const innerX = leftPanel.x + 9, innerY = leftPanel.y + 45, innerW = leftPanel.w - 18, innerH = leftPanel.h - 54;
+    const cardGap = 7, cardW = (innerW - cardGap * (cols - 1)) / cols, rows = Math.ceil(elems.length / cols);
+    const cardH = Math.max(35, (innerH - cardGap * (rows - 1)) / rows);
+    if (mx >= leftPanel.x && mx <= leftPanel.x + leftPanel.w && my >= innerY && my <= innerY + innerH) {
+      for (let i = 0; i < elems.length; i++) {
+        const col = i % cols, row = Math.floor(i / cols);
+        const r = { x: innerX + col * (cardW + cardGap), y: innerY + row * (cardH + cardGap), w: cardW, h: cardH };
+        if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
+          const k = elems[i], actual = k === "hunt" ? "hunter" : k;
+          if (actual === "sand" || unlockedElements[actual]) { equippedElement = actual; saveGameData(); }
+          return;
+        }
+      }
+    }
+    const raidElems = ["lava", "volcano"], raidGap = 12, raidInnerY = rightPanel.y + 48, raidInnerH = rightPanel.h - 58;
+    const raidCardH = Math.max(58, (raidInnerH - raidGap) / 2);
+    if (mx >= rightPanel.x && mx <= rightPanel.x + rightPanel.w && my >= raidInnerY && my <= raidInnerY + raidInnerH) {
+      for (let i = 0; i < raidElems.length; i++) {
+        const r = { x: rightPanel.x + 10, y: raidInnerY + i * (raidCardH + raidGap), w: rightPanel.w - 20, h: raidCardH };
+        if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
+          const k = raidElems[i];
+          if (unlockedElements[k]) { equippedElement = k; saveGameData(); }
+          return;
+        }
+      }
+    }
+  }
+});
+
+window.addEventListener("keydown", function (e) {
+  if (inHome) return;
+  const k = e.key.toLowerCase();
+  if (k === "1") {
+    isPaused = !isPaused;
+    if (!isPaused) currentScreen = "game";
+    e.preventDefault();
+    return;
+  }
+  if (cutscene) return;
+  if (k in keys) { keys[k] = true; e.preventDefault(); }
+  if (k === "g") { useGAbility(); e.preventDefault(); }
+  if (k === "f") { useFAbility(); e.preventDefault(); }
+  if (k === "v") { useVBoost(); e.preventDefault(); }
+  if (k === " " || k === "spacebar" || e.code === "Space") { useMelee(); e.preventDefault(); }
+});
+
+window.addEventListener("keyup", function (e) {
+  const k = e.key.toLowerCase();
+  if (k in keys) { keys[k] = false; e.preventDefault(); }
+});
+
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
